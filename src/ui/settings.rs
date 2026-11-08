@@ -16,27 +16,20 @@ use std::rc::Rc;
 use tracing::info;
 
 pub struct SettingsWindow {
-    window: adw::PreferencesWindow,
+    dialog: adw::PreferencesDialog,
 }
 
 impl SettingsWindow {
     /// Constructs and presents the Preferences Window
     pub fn present(
-        parent: Option<&impl IsA<gtk4::Window>>,
+        parent: Option<&impl IsA<gtk4::Widget>>,
         config: Rc<RefCell<BrowserConfig>>,
         storage: StorageService,
         session: Option<webkit6::NetworkSession>,
     ) {
-        let win = adw::PreferencesWindow::builder()
+        let win = adw::PreferencesDialog::builder()
             .title("Preferences")
-            .modal(true)
-            .default_width(680)
-            .default_height(540)
             .build();
-
-        if let Some(p) = parent {
-            win.set_transient_for(Some(p.as_ref()));
-        }
 
         // ================= PAGE 1: GENERAL =================
         let general_page = adw::PreferencesPage::builder()
@@ -209,15 +202,14 @@ impl SettingsWindow {
                 || !tmpl.starts_with("https://")
                 || !tmpl.contains("%s")
             {
-                let dialog = adw::MessageDialog::builder()
+                let dialog = adw::AlertDialog::builder()
                     .heading("Invalid Search Engine")
                     .body(
                         "Engine name and keyword are required. The URL template must start with 'https://' and contain '%s' as the query placeholder.",
                     )
-                    .transient_for(&win_ref_engine)
                     .build();
                 dialog.add_response("ok", "OK");
-                dialog.present();
+                dialog.present(Some(&win_ref_engine));
                 return;
             }
 
@@ -231,15 +223,14 @@ impl SettingsWindow {
             kw_ref.set_text("");
             tmpl_ref.set_text("https://example.com/search?q=%s");
 
-            let dialog = adw::MessageDialog::builder()
+            let dialog = adw::AlertDialog::builder()
                 .heading("Search Engine Added")
                 .body(format!(
                     "Custom search engine '{n}' was successfully added."
                 ))
-                .transient_for(&win_ref_engine)
                 .build();
             dialog.add_response("ok", "OK");
-            dialog.present();
+            dialog.present(Some(&win_ref_engine));
         });
 
         let btn_row = adw::ActionRow::builder()
@@ -325,14 +316,15 @@ impl SettingsWindow {
 
         let dark_switch = adw::SwitchRow::builder()
             .title("Dark Theme")
-            .subtitle("Use glassmorphic burgundy & emerald dark theme")
-            .active(config.borrow().force_dark_theme)
+            .subtitle("Follows system or manual override")
+            .active(config.borrow().color_scheme == "dark" || config.borrow().force_dark_theme)
             .build();
 
         let cfg_dark = config.clone();
         dark_switch.connect_active_notify(move |sw| {
             let active = sw.is_active();
             cfg_dark.borrow_mut().force_dark_theme = active;
+            cfg_dark.borrow_mut().color_scheme = if active { "dark".to_string() } else { "light".to_string() };
             let _ = cfg_dark.borrow().save();
             let style_manager = adw::StyleManager::default();
             if active {
@@ -342,6 +334,61 @@ impl SettingsWindow {
             }
         });
         theme_group.add(&dark_switch);
+
+        // Accent color swatches row matching prototype: #3584e4, #26a269, #9141ac, #e66100
+        let accent_row = adw::ActionRow::builder()
+            .title("Accent Color")
+            .subtitle("Changes buttons, selection and focus rings")
+            .build();
+
+        let accent_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(8)
+            .valign(gtk4::Align::Center)
+            .build();
+
+        let swatches = [
+            ("#3584e4", "Blue (Default)", "swatch-blue"),
+            ("#26a269", "Green", "swatch-green"),
+            ("#9141ac", "Purple", "swatch-purple"),
+            ("#e66100", "Orange", "swatch-orange"),
+        ];
+
+        for (hex, label, css_cls) in swatches {
+            let swatch = gtk4::Button::builder()
+                .tooltip_text(label)
+                .css_classes(["swatch", css_cls])
+                .build();
+            swatch.set_size_request(24, 24);
+
+            let cfg_acc = config.clone();
+            let hex_str = hex.to_string();
+            swatch.connect_clicked(move |_| {
+                cfg_acc.borrow_mut().accent_color = hex_str.clone();
+                let _ = cfg_acc.borrow().save();
+                crate::ui::theme::set_accent(&hex_str);
+            });
+            accent_box.append(&swatch);
+        }
+        accent_row.add_suffix(&accent_box);
+        theme_group.add(&accent_row);
+
+        // Tab layout row: Top tabs vs Vertical sidebar
+        let tab_layout_row = adw::ComboRow::builder()
+            .title("Tab Layout")
+            .subtitle("Top tab strip or vertical sidebar")
+            .model(&gtk4::StringList::new(&["Top tabs", "Vertical sidebar"]))
+            .selected(if config.borrow().tab_layout == "vertical" { 1 } else { 0 })
+            .build();
+
+        let cfg_layout = config.clone();
+        tab_layout_row.connect_selected_notify(move |row| {
+            let sel = row.selected();
+            let layout_val = if sel == 1 { "vertical" } else { "top" };
+            cfg_layout.borrow_mut().tab_layout = layout_val.to_string();
+            let _ = cfg_layout.borrow().save();
+        });
+        theme_group.add(&tab_layout_row);
 
         // Wallpaper picker row
         let wallpaper_row = adw::ActionRow::builder()
@@ -379,7 +426,8 @@ impl SettingsWindow {
 
             let cfg_copy = cfg_wall.clone();
             let row_copy = wall_row_ref.clone();
-            dialog.open(Some(&win_ref), None::<&gio::Cancellable>, move |res| {
+            let root_win = win_ref.root().and_downcast::<gtk4::Window>();
+            dialog.open(root_win.as_ref(), None::<&gio::Cancellable>, move |res| {
                 if let Ok(file) = res
                     && let Some(src_path) = file.path()
                     && let Ok(dest_str) = copy_and_validate_wallpaper(&src_path)
@@ -428,7 +476,8 @@ impl SettingsWindow {
 
             let cfg_copy = cfg_dl.clone();
             let row_copy = row_dl_ref.clone();
-            dialog.select_folder(Some(&win_ref_dl), None::<&gio::Cancellable>, move |res| {
+            let root_win = win_ref_dl.root().and_downcast::<gtk4::Window>();
+            dialog.select_folder(root_win.as_ref(), None::<&gio::Cancellable>, move |res| {
                 if let Ok(folder) = res
                     && let Some(path) = folder.path()
                 {
@@ -693,10 +742,9 @@ impl SettingsWindow {
                     let id_ren = ws_id.clone();
                     let col_ren = ws_color.clone();
                     rename_btn.connect_clicked(move |_| {
-                        let dialog = adw::MessageDialog::builder()
+                        let dialog = adw::AlertDialog::builder()
                             .heading("Rename Workspace")
                             .body("Enter new name for this workspace:")
-                            .transient_for(&win_parent)
                             .build();
                         let entry = gtk4::Entry::builder().text(&ws_name).build();
                         dialog.set_extra_child(Some(&entry));
@@ -707,7 +755,7 @@ impl SettingsWindow {
                         let row_sub = row_ren.clone();
                         let id_sub = id_ren.clone();
                         let col_sub = col_ren.clone();
-                        dialog.connect_response(None, move |d, resp| {
+                        dialog.choose(Some(&win_parent), None::<&gio::Cancellable>, move |resp| {
                             if resp == "save" {
                                 let new_name = entry.text().trim().to_string();
                                 if !new_name.is_empty() {
@@ -723,9 +771,7 @@ impl SettingsWindow {
                                     });
                                 }
                             }
-                            d.destroy();
                         });
-                        dialog.present();
                     });
                     row.add_suffix(&rename_btn);
 
@@ -785,7 +831,7 @@ impl SettingsWindow {
 
         let toolkit_row = adw::ActionRow::builder()
             .title("User Interface")
-            .subtitle("GTK4 & Libadwaita 1.4")
+            .subtitle("GTK4 & Libadwaita 1.6+")
             .build();
         about_group.add(&toolkit_row);
         about_page.add(&about_group);
@@ -798,7 +844,7 @@ impl SettingsWindow {
         win.add(&ws_page);
         win.add(&about_page);
 
-        win.present();
+        win.present(parent);
     }
 }
 

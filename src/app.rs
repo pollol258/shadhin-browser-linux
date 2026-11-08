@@ -4,6 +4,7 @@
 //! the window, and embeds a `webkit6::WebView` loading a verified URL.
 
 use crate::browser::cli::{format_help_text, parse_cli_args};
+use crate::config::BrowserConfig;
 use crate::ui;
 use crate::ui::window::ShadhinWindow;
 use adw::prelude::*;
@@ -135,17 +136,15 @@ impl ShadhinApp {
 
     /// Prepares UI styling and decoration layout
     fn prepare_environment() {
-        // Force Libadwaita dark scheme as per UI specification 2.1
-        let style_manager = adw::StyleManager::default();
-        style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+        let config = BrowserConfig::load();
 
-        // Ensure minimize, maximize, and close buttons are shown (overriding WSLg defaults)
+        // Ensure window controls are shown
         if let Some(settings) = gtk4::Settings::default() {
             settings.set_gtk_decoration_layout(Some(":minimize,maximize,close"));
         }
 
-        // Load GResource & apply CSS theme
-        ui::setup_theme();
+        // Load GResource & apply CSS theme and dynamic tokens (accent, light/dark, reduced motion)
+        ui::setup_theme(Some(&config.accent_color), Some(&config.color_scheme));
     }
 
     /// Launches a private window

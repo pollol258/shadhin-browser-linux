@@ -7,6 +7,7 @@ pub mod cli;
 pub mod downloads;
 pub mod navigation;
 pub mod permissions;
+pub mod sandbox;
 pub mod session;
 pub mod tabs;
 pub mod webview;

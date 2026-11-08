@@ -62,6 +62,18 @@ pub fn compute_effective_sidebar_state(window_width: i32, user_pref: SidebarStat
     }
 }
 
+fn default_accent() -> String {
+    "#3584e4".to_string()
+}
+
+fn default_color_scheme() -> String {
+    "system".to_string()
+}
+
+fn default_tab_layout() -> String {
+    "top".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserConfig {
     pub homepage: String,
@@ -72,6 +84,12 @@ pub struct BrowserConfig {
     pub wallpaper_path: Option<String>,
     #[serde(default)]
     pub sidebar_state: SidebarState,
+    #[serde(default = "default_color_scheme")]
+    pub color_scheme: String,
+    #[serde(default = "default_accent")]
+    pub accent_color: String,
+    #[serde(default = "default_tab_layout")]
+    pub tab_layout: String,
     pub privacy: PrivacyConfig,
 }
 
@@ -129,6 +147,9 @@ impl Default for BrowserConfig {
             download_dir: default_download.to_string_lossy().to_string(),
             wallpaper_path: None,
             sidebar_state: SidebarState::default(),
+            color_scheme: default_color_scheme(),
+            accent_color: default_accent(),
+            tab_layout: default_tab_layout(),
             privacy: PrivacyConfig::default(),
         }
     }

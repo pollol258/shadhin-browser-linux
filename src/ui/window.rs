@@ -28,7 +28,6 @@ use crate::ui::newtab::ShadhinNewTab;
 use crate::ui::settings::SettingsWindow;
 use crate::ui::sidebar::ShadhinSidebar;
 use crate::ui::tabbar::{ShadhinTabStrip, TabDisplayInfo};
-use crate::ui::titlebar::ShadhinTitlebar;
 use crate::ui::toolbar::ShadhinToolbar;
 use crate::utils::debounce::Debounce;
 use adw::prelude::*;
@@ -77,12 +76,14 @@ pub struct TabUiItem {
 pub struct ShadhinWindow {
     window: adw::ApplicationWindow,
     split_view: adw::OverlaySplitView,
-    titlebar: Rc<ShadhinTitlebar>,
     toolbar: Rc<ShadhinToolbar>,
     bookmarks_bar: Rc<BookmarksBar>,
     sidebar: Rc<ShadhinSidebar>,
     tab_view: adw::TabView,
+    tab_bar: adw::TabBar,
     tab_strip: Rc<ShadhinTabStrip>,
+    load_line: gtk4::ProgressBar,
+    sandbox_banner: adw::Banner,
     find_bar: Rc<FindBar>,
     tab_manager: Rc<RefCell<TabManager>>,
     tab_items: Rc<RefCell<Vec<Rc<TabUiItem>>>>,
@@ -118,6 +119,8 @@ pub struct NavigationContext {
     pub https_manager: Rc<RefCell<HttpsUpgradeManager>>,
     pub download_mgr: DownloadManager,
     pub persistence_allowed: bool,
+    pub load_line: gtk4::ProgressBar,
+    pub sandbox_banner: adw::Banner,
 }
 
 impl ShadhinWindow {
@@ -155,53 +158,59 @@ impl ShadhinWindow {
             .application(app)
             .title(title)
             .default_width(1280)
-            .default_height(820)
+            .default_height(800)
             .css_classes(css_classes)
             .build();
+        window.set_size_request(600, 450);
 
         // 2. Tab management and UI components
         let tab_view = adw::TabView::new();
         let tab_strip = Rc::new(ShadhinTabStrip::new(&tab_view));
-        let titlebar = Rc::new(ShadhinTitlebar::new(tab_strip.clone()));
-        if is_private {
-            titlebar.set_private_mode(true);
-        }
         let toolbar = Rc::new(ShadhinToolbar::new());
+        if is_private {
+            toolbar.set_private_mode(true);
+        }
+
         let sidebar = Rc::new(ShadhinSidebar::new());
         let find_bar = Rc::new(FindBar::new());
 
         let tab_manager = Rc::new(RefCell::new(TabManager::new()));
         let tab_items: Rc<RefCell<Vec<Rc<TabUiItem>>>> = Rc::new(RefCell::new(Vec::new()));
 
-        // 3. Central Content Box (Titlebar + Toolbar + Content Frame)
-        let content_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .hexpand(true)
-            .vexpand(true)
+        // TabBar for top strip layout (Layout a)
+        let tab_bar = adw::TabBar::builder()
+            .view(&tab_view)
+            .autohide(false)
+            .css_classes(["shadhin-top-tab-bar"])
             .build();
 
-        content_box.append(titlebar.widget());
-        content_box.append(toolbar.widget());
+        let tab_bar_new_btn = gtk4::Button::builder()
+            .icon_name("list-add-symbolic")
+            .tooltip_text("New tab (Ctrl+T)")
+            .css_classes(["iconbtn", "flat"])
+            .valign(gtk4::Align::Center)
+            .margin_end(6)
+            .build();
+        tab_bar_new_btn.set_size_request(32, 32);
+        tab_bar.set_end_action_widget(Some(&tab_bar_new_btn));
 
-        // Rounded Content Frame hosting TabView and floating FindBar via Overlay
-        let content_frame = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .css_classes(["shadhin-content-frame"])
+        // 2px load progress line directly under header
+        let load_line = gtk4::ProgressBar::builder()
+            .css_classes(["shadhin-load-line"])
+            .fraction(0.0)
+            .visible(false)
             .hexpand(true)
-            .vexpand(true)
+            .build();
+        load_line.set_size_request(-1, 2);
+
+        // Real WebKit child process sandbox warning banner
+        let sandbox_banner = adw::Banner::builder()
+            .title("Sandbox is not active. Web content may be less isolated.")
+            .revealed(false)
             .build();
 
         tab_view.set_hexpand(true);
         tab_view.set_vexpand(true);
-
-        let overlay = gtk4::Overlay::new();
-        overlay.set_hexpand(true);
-        overlay.set_vexpand(true);
-        overlay.set_child(Some(&tab_view));
-        overlay.add_overlay(find_bar.widget());
-
-        content_frame.append(&overlay);
-        content_box.append(&content_frame);
 
         // 4. Persistence, sessions, and downloads initialization
         let (storage, persistence_allowed) = if is_private {
@@ -250,8 +259,27 @@ impl ShadhinWindow {
 
         toolbar.address_bar().set_storage(storage.clone());
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
-        content_box.insert_child_after(bookmarks_bar.widget(), Some(toolbar.widget()));
         let current_workspace = Rc::new(RefCell::new("default".to_string()));
+
+        // 5. Overlay Split View (Sidebar + Content)
+        let split_view = adw::OverlaySplitView::new();
+        split_view.set_sidebar(Some(sidebar.widget()));
+        split_view.set_content(Some(&tab_view));
+        split_view.set_hexpand(true);
+        split_view.set_vexpand(true);
+
+        // 6. Central Root Box hosting LoadLine, TabBar, BookmarksBar, FindBar, Banners, and SplitView
+        let root_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+
+        root_box.append(toolbar.widget());
+        root_box.append(&load_line);
+        root_box.append(&tab_bar);
+        root_box.append(bookmarks_bar.widget());
+        root_box.append(find_bar.widget());
 
         // Banners
         if is_private {
@@ -259,7 +287,7 @@ impl ShadhinWindow {
                 .title("Private Browsing: Shadhin won't save browsing history, cookies, or site data. Downloaded files remain on disk.")
                 .revealed(true)
                 .build();
-            content_box.prepend(&pvt_banner);
+            root_box.append(&pvt_banner);
         } else if session_mgr.borrow().had_unclean_exit() {
             let banner = adw::Banner::builder()
                 .title("Shadhin Browser closed unexpectedly.")
@@ -273,15 +301,11 @@ impl ShadhinWindow {
                 sm_click.borrow().acknowledge_crash();
                 banner_ref.set_revealed(false);
             });
-            content_box.prepend(&banner);
+            root_box.append(&banner);
         }
 
-        // 5. Overlay Split View (Sidebar + Content)
-        let split_view = adw::OverlaySplitView::new();
-        split_view.set_sidebar(Some(sidebar.widget()));
-        split_view.set_content(Some(&content_box));
-        split_view.set_hexpand(true);
-        split_view.set_vexpand(true);
+        root_box.append(&sandbox_banner);
+        root_box.append(&split_view);
 
         let initial_pref = config.borrow().sidebar_state;
         let initial_eff = compute_effective_sidebar_state(1280, initial_pref);
@@ -293,68 +317,36 @@ impl ShadhinWindow {
             initial_eff,
             &split_view,
             &sidebar,
-            &titlebar,
+            &toolbar,
             &effective_sidebar_state,
         );
 
-        // Responsive breakpoints:
-        // Breakpoint for < 900px (collapses Expanded -> Compact)
+        // Tab layout configuration: "top" vs "vertical"
+        let initial_layout = config.borrow().tab_layout.clone();
+        if initial_layout == "vertical" {
+            tab_bar.set_visible(false);
+            split_view.set_show_sidebar(true);
+            toolbar.update_sidebar_active(true);
+        } else {
+            tab_bar.set_visible(true);
+            split_view.set_show_sidebar(false);
+            toolbar.update_sidebar_active(false);
+        }
+
+        // Responsive breakpoint: for < 800px collapses sidebar to hidden
         let bp_compact = adw::Breakpoint::new(
-            adw::BreakpointCondition::parse("max-width: 900px").expect("valid condition"),
+            adw::BreakpointCondition::parse("max-width: 800px").expect("valid condition"),
         );
         let sv_bp = split_view.clone();
-        let sb_bp = sidebar.clone();
-        let tb_bp = titlebar.clone();
-        let eff_bp = effective_sidebar_state.clone();
-        let saved_bp = saved_sidebar_state.clone();
-        let win_bp_clone = window.clone();
+        let tb_bp = toolbar.clone();
         bp_compact.connect_apply(move |_| {
-            let cur_w = win_bp_clone.width();
-            let saved = *saved_bp.borrow();
-            let effective = compute_effective_sidebar_state(cur_w, saved);
-            Self::apply_sidebar_state(effective, &sv_bp, &sb_bp, &tb_bp, &eff_bp);
-        });
-        let sv_unbp = split_view.clone();
-        let sb_unbp = sidebar.clone();
-        let tb_unbp = titlebar.clone();
-        let eff_unbp = effective_sidebar_state.clone();
-        let saved_unbp = saved_sidebar_state.clone();
-        let win_unbp_clone = window.clone();
-        bp_compact.connect_unapply(move |_| {
-            let cur_w = win_unbp_clone.width();
-            let saved = *saved_unbp.borrow();
-            let effective = compute_effective_sidebar_state(cur_w, saved);
-            Self::apply_sidebar_state(effective, &sv_unbp, &sb_unbp, &tb_unbp, &eff_unbp);
+            sv_bp.set_show_sidebar(false);
+            tb_bp.update_sidebar_active(false);
         });
         window.add_breakpoint(bp_compact);
 
-        // Breakpoint for < 650px (collapses to Hidden)
-        let bp_hidden = adw::Breakpoint::new(
-            adw::BreakpointCondition::parse("max-width: 650px").expect("valid condition"),
-        );
-        let sv_bph = split_view.clone();
-        let sb_bph = sidebar.clone();
-        let tb_bph = titlebar.clone();
-        let eff_bph = effective_sidebar_state.clone();
-        bp_hidden.connect_apply(move |_| {
-            Self::apply_sidebar_state(SidebarState::Hidden, &sv_bph, &sb_bph, &tb_bph, &eff_bph);
-        });
-        let sv_unbph = split_view.clone();
-        let sb_unbph = sidebar.clone();
-        let tb_unbph = titlebar.clone();
-        let eff_unbph = effective_sidebar_state.clone();
-        let saved_unbph = saved_sidebar_state.clone();
-        let win_unbph_clone = window.clone();
-        bp_hidden.connect_unapply(move |_| {
-            let cur_w = win_unbph_clone.width();
-            let saved = *saved_unbph.borrow();
-            let effective = compute_effective_sidebar_state(cur_w, saved);
-            Self::apply_sidebar_state(effective, &sv_unbph, &sb_unbph, &tb_unbph, &eff_unbph);
-        });
-        window.add_breakpoint(bp_hidden);
-
         let toast_overlay = adw::ToastOverlay::new();
-        toast_overlay.set_child(Some(&split_view));
+        toast_overlay.set_child(Some(&root_box));
         window.set_content(Some(&toast_overlay));
 
         let toast_ov = toast_overlay.clone();
@@ -384,17 +376,93 @@ impl ShadhinWindow {
             https_manager: https_manager.clone(),
             download_mgr: download_mgr.clone(),
             persistence_allowed,
+            load_line: load_line.clone(),
+            sandbox_banner: sandbox_banner.clone(),
+        });
+
+        // Wire top TabBar '+' new tab button
+        let nav_nt_tb = nav_ctx.clone();
+        tab_bar_new_btn.connect_clicked(move |_| {
+            nav_nt_tb.create_tab(None, None);
+        });
+
+        // Wire toolbar '+' new tab button
+        let nav_nt_bar = nav_ctx.clone();
+        toolbar.connect_new_tab(move || {
+            nav_nt_bar.create_tab(None, None);
+        });
+
+        // Wire sidebar new tab button
+        let nav_nt_sb = nav_ctx.clone();
+        sidebar.connect_new_tab(move || {
+            nav_nt_sb.create_tab(None, None);
+        });
+
+        // Wire sidebar tab select
+        let tv_sb_sel = tab_view.clone();
+        sidebar.connect_tab_selected(move |idx| {
+            if idx >= 0 && idx < tv_sb_sel.n_pages() {
+                let page = tv_sb_sel.nth_page(idx);
+                tv_sb_sel.set_selected_page(&page);
+            }
+        });
+
+        // Wire sidebar tab close
+        let tv_sb_close = tab_view.clone();
+        sidebar.connect_tab_close(move |idx| {
+            if idx >= 0 && idx < tv_sb_close.n_pages() {
+                let page = tv_sb_close.nth_page(idx);
+                tv_sb_close.close_page(&page);
+            }
+        });
+
+        // Wire sidebar tab pin
+        let tm_sb_pin = tab_manager.clone();
+        let nav_sb_pin = nav_ctx.clone();
+        let tv_sb_pin = tab_view.clone();
+        sidebar.connect_tab_pin(move |idx| {
+            if idx >= 0 {
+                let tm = tm_sb_pin.borrow_mut();
+                if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                    let mut tab = tab_cell.borrow_mut();
+                    tab.pinned = !tab.pinned;
+                    if idx < tv_sb_pin.n_pages() {
+                        let page = tv_sb_pin.nth_page(idx);
+                        tv_sb_pin.set_page_pinned(&page, tab.pinned);
+                    }
+                }
+                drop(tm);
+                nav_sb_pin.sync_tabs();
+            }
+        });
+
+        // Wire sidebar tab sleep
+        let tm_sb_sleep = tab_manager.clone();
+        let nav_sb_sleep = nav_ctx.clone();
+        sidebar.connect_tab_sleep(move |idx| {
+            if idx >= 0 {
+                let tm = tm_sb_sleep.borrow_mut();
+                if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                    let mut tab = tab_cell.borrow_mut();
+                    tab.is_discarded = true;
+                    tab.has_active_webview = false;
+                }
+                drop(tm);
+                nav_sb_sleep.sync_tabs();
+            }
         });
 
         let win = Self {
             window,
             split_view,
-            titlebar,
             toolbar,
             bookmarks_bar,
             sidebar,
             tab_view,
+            tab_bar,
             tab_strip,
+            load_line,
+            sandbox_banner,
             find_bar,
             tab_manager,
             tab_items,
@@ -483,6 +551,20 @@ impl ShadhinWindow {
                 tv_clone.set_selected_page(&page);
             }
         });
+
+        // Reflect real discarded / sleeping tab state on AdwTabPage indicator
+        for (i, info) in tabs_info.iter().enumerate() {
+            if (i as i32) < tv.n_pages() {
+                let page = tv.nth_page(i as i32);
+                if info.is_discarded {
+                    page.set_indicator_icon(Some(&gio::ThemedIcon::new("weather-clear-night-symbolic")));
+                    page.set_indicator_tooltip("Sleeping tab (RAM discarded)");
+                } else {
+                    page.set_indicator_icon(None::<&gio::ThemedIcon>);
+                    page.set_indicator_tooltip("");
+                }
+            }
+        }
 
         if let Some(active_tab_cell) = tm.active_tab() {
             let active = active_tab_cell.borrow();
@@ -958,6 +1040,8 @@ impl NavigationContext {
                 webkit6::LoadEvent::Started => {
                     tab.is_loading = true;
                     tb_lc.set_is_loading(true);
+                    nav_lc.load_line.set_fraction(0.05);
+                    nav_lc.load_line.set_visible(true);
                     if let Some(uri) = wv.uri() {
                         let uri_str = uri.as_str();
                         tab.url = uri_str.to_string();
@@ -1003,6 +1087,17 @@ impl NavigationContext {
                     tab.progress = 0.0;
                     tb_lc.set_is_loading(false);
                     tb_lc.address_bar().set_progress(0.0);
+                    nav_lc.load_line.set_visible(false);
+                    nav_lc.load_line.set_fraction(0.0);
+
+                    // Real WebKit child process sandbox check
+                    let sb_status = crate::browser::sandbox::check_webkit_child_sandbox();
+                    if sb_status == crate::browser::sandbox::SandboxStatus::Inactive {
+                        nav_lc.sandbox_banner.set_revealed(true);
+                    } else {
+                        nav_lc.sandbox_banner.set_revealed(false);
+                    }
+
                     if let Some(title) = wv.title() {
                         let title_str = title.to_string();
                         tab.title = title_str.clone();
@@ -1063,10 +1158,18 @@ impl NavigationContext {
         // 4. connect_estimated_load_progress_notify
         let tb_prog = self.toolbar.clone();
         let tab_c_prog = tab_c.clone();
+        let ll_prog = self.load_line.clone();
         webview.connect_estimated_load_progress_notify(move |wv| {
             let progress = wv.estimated_load_progress();
             tab_c_prog.borrow_mut().progress = progress;
             tb_prog.address_bar().set_progress(progress);
+            if progress > 0.0 && progress < 1.0 {
+                ll_prog.set_fraction(progress);
+                ll_prog.set_visible(true);
+            } else {
+                ll_prog.set_visible(false);
+                ll_prog.set_fraction(0.0);
+            }
         });
 
         // 5. connect_decide_policy (HTTPS-Only Upgrade interceptor & Net Diagnostics)
@@ -1679,19 +1782,19 @@ impl NavigationContext {
 }
 
 impl ShadhinWindow {
-    /// Applies an effective sidebar state to the split view, sidebar, and titlebar
+    /// Applies an effective sidebar state to the split view, sidebar, and toolbar
     fn apply_sidebar_state(
         state: SidebarState,
         split_view: &adw::OverlaySplitView,
         sidebar: &Rc<ShadhinSidebar>,
-        titlebar: &Rc<ShadhinTitlebar>,
+        toolbar: &Rc<ShadhinToolbar>,
         effective_cell: &Rc<RefCell<SidebarState>>,
     ) {
         *effective_cell.borrow_mut() = state;
         match state {
             SidebarState::Hidden => {
                 split_view.set_show_sidebar(false);
-                titlebar.update_sidebar_state(SidebarState::Hidden);
+                toolbar.update_sidebar_active(false);
             }
             SidebarState::Compact => {
                 split_view.set_show_sidebar(true);
@@ -1699,7 +1802,7 @@ impl ShadhinWindow {
                 split_view.set_max_sidebar_width(56.0);
                 split_view.set_sidebar_width_fraction(0.04);
                 sidebar.set_compact_mode(true);
-                titlebar.update_sidebar_state(SidebarState::Compact);
+                toolbar.update_sidebar_active(true);
             }
             SidebarState::Expanded => {
                 split_view.set_show_sidebar(true);
@@ -1707,7 +1810,7 @@ impl ShadhinWindow {
                 split_view.set_max_sidebar_width(280.0);
                 split_view.set_sidebar_width_fraction(0.18);
                 sidebar.set_compact_mode(false);
-                titlebar.update_sidebar_state(SidebarState::Expanded);
+                toolbar.update_sidebar_active(true);
             }
         }
     }
@@ -1720,7 +1823,7 @@ impl ShadhinWindow {
         cfg_cell: &Rc<RefCell<BrowserConfig>>,
         split_view: &adw::OverlaySplitView,
         sidebar: &Rc<ShadhinSidebar>,
-        titlebar: &Rc<ShadhinTitlebar>,
+        toolbar: &Rc<ShadhinToolbar>,
         effective_cell: &Rc<RefCell<SidebarState>>,
     ) {
         let cur_eff = *effective_cell.borrow();
@@ -1741,10 +1844,10 @@ impl ShadhinWindow {
         let _ = cfg_cell.borrow().save();
 
         let effective = compute_effective_sidebar_state(win_width, new_pref);
-        Self::apply_sidebar_state(effective, split_view, sidebar, titlebar, effective_cell);
+        Self::apply_sidebar_state(effective, split_view, sidebar, toolbar, effective_cell);
     }
 
-    /// Sets an explicit sidebar state chosen by the user from the titlebar menu
+    /// Sets an explicit sidebar state chosen by the user
     #[allow(clippy::too_many_arguments)]
     fn set_explicit_sidebar_state(
         new_state: SidebarState,
@@ -1753,7 +1856,7 @@ impl ShadhinWindow {
         cfg_cell: &Rc<RefCell<BrowserConfig>>,
         split_view: &adw::OverlaySplitView,
         sidebar: &Rc<ShadhinSidebar>,
-        titlebar: &Rc<ShadhinTitlebar>,
+        toolbar: &Rc<ShadhinToolbar>,
         effective_cell: &Rc<RefCell<SidebarState>>,
     ) {
         *saved_cell.borrow_mut() = new_state;
@@ -1761,70 +1864,29 @@ impl ShadhinWindow {
         let _ = cfg_cell.borrow().save();
 
         let effective = compute_effective_sidebar_state(win_width, new_state);
-        Self::apply_sidebar_state(effective, split_view, sidebar, titlebar, effective_cell);
+        Self::apply_sidebar_state(effective, split_view, sidebar, toolbar, effective_cell);
     }
 
     /// Sets up cross-component UI signals
     fn setup_signals(&self) {
-        // 1. Sidebar Toggle Button in Titlebar and Toolbar
-        let win_w1 = self.window.clone();
-        let saved_cell1 = self.saved_sidebar_state.clone();
-        let cfg_cell1 = self.config.clone();
-        let sv1 = self.split_view.clone();
-        let sb1 = self.sidebar.clone();
-        let tb_tb1 = self.titlebar.clone();
-        let eff1 = self.effective_sidebar_state.clone();
-
-        self.titlebar.connect_sidebar_toggle(move || {
-            Self::toggle_sidebar_action(
-                win_w1.width(),
-                &saved_cell1,
-                &cfg_cell1,
-                &sv1,
-                &sb1,
-                &tb_tb1,
-                &eff1,
-            );
-        });
-
-        let win_w_st = self.window.clone();
-        let saved_cell_st = self.saved_sidebar_state.clone();
-        let cfg_cell_st = self.config.clone();
-        let sv_st = self.split_view.clone();
-        let sb_st = self.sidebar.clone();
-        let tb_tb_st = self.titlebar.clone();
-        let eff_st = self.effective_sidebar_state.clone();
-
-        self.titlebar.connect_sidebar_state_selected(move |chosen| {
-            Self::set_explicit_sidebar_state(
-                chosen,
-                win_w_st.width(),
-                &saved_cell_st,
-                &cfg_cell_st,
-                &sv_st,
-                &sb_st,
-                &tb_tb_st,
-                &eff_st,
-            );
-        });
-
-        let win_w2 = self.window.clone();
-        let saved_cell2 = self.saved_sidebar_state.clone();
-        let cfg_cell2 = self.config.clone();
-        let sv2 = self.split_view.clone();
-        let sb2 = self.sidebar.clone();
-        let tb_tb2 = self.titlebar.clone();
-        let eff2 = self.effective_sidebar_state.clone();
+        // 1. Sidebar Toggle Button in Toolbar
+        let win_w = self.window.clone();
+        let saved_cell = self.saved_sidebar_state.clone();
+        let cfg_cell = self.config.clone();
+        let sv = self.split_view.clone();
+        let sb = self.sidebar.clone();
+        let tb = self.toolbar.clone();
+        let eff = self.effective_sidebar_state.clone();
 
         self.toolbar.connect_sidebar_toggle(move || {
             Self::toggle_sidebar_action(
-                win_w2.width(),
-                &saved_cell2,
-                &cfg_cell2,
-                &sv2,
-                &sb2,
-                &tb_tb2,
-                &eff2,
+                win_w.width(),
+                &saved_cell,
+                &cfg_cell,
+                &sv,
+                &sb,
+                &tb,
+                &eff,
             );
         });
 
@@ -2214,10 +2276,9 @@ impl ShadhinWindow {
                 .placeholder_text("Workspace name (e.g. Research)")
                 .build();
 
-            let dialog = adw::MessageDialog::builder()
+            let dialog = adw::AlertDialog::builder()
                 .heading("New Workspace")
                 .body("Enter a name for the new isolated workspace:")
-                .transient_for(&win_new_ws)
                 .build();
 
             dialog.set_extra_child(Some(&entry));
@@ -2229,7 +2290,7 @@ impl ShadhinWindow {
             let sb = sb_new_ws.clone();
             let sm_click = sm_new_ws.clone();
 
-            dialog.connect_response(None, move |d, resp| {
+            dialog.choose(Some(&win_new_ws), None::<&gio::Cancellable>, move |resp| {
                 if resp == "create" {
                     let name = entry.text().trim().to_string();
                     if !name.is_empty() {
@@ -2247,9 +2308,7 @@ impl ShadhinWindow {
                         info!("Created new workspace: '{name}' (id: '{ws_id}')");
                     }
                 }
-                d.destroy();
             });
-            dialog.present();
         });
 
         // 12. Clean Shutdown on Close Request
@@ -2372,7 +2431,6 @@ impl ShadhinWindow {
         let bb_key = self.bookmarks_bar.clone();
         let saved_key = self.saved_sidebar_state.clone();
         let eff_key = self.effective_sidebar_state.clone();
-        let titlebar_key = self.titlebar.clone();
         let nav_key = self.nav_ctx.clone();
         let session_key = self.nav_ctx.session.clone();
         let perm_key = self.persistence_allowed;
@@ -2596,7 +2654,7 @@ impl ShadhinWindow {
                     &cfg_key,
                     &split_key,
                     &sb_key,
-                    &titlebar_key,
+                    &tb_key,
                     &eff_key,
                 );
                 return glib::Propagation::Stop;
@@ -2951,9 +3009,7 @@ impl ShadhinWindow {
 
     /// Displays the Libadwaita About dialog
     fn show_about_dialog(parent: &adw::ApplicationWindow) {
-        let about = adw::AboutWindow::builder()
-            .transient_for(parent)
-            .modal(true)
+        let about = adw::AboutDialog::builder()
             .application_name(crate::app::APP_NAME)
             .version(crate::app::APP_VERSION)
             .comments("Fast · Private · Open — Native Linux web browser")
@@ -2963,7 +3019,7 @@ impl ShadhinWindow {
             .application_icon(crate::app::APP_ID)
             .license_type(gtk4::License::Gpl30)
             .build();
-        about.present();
+        about.present(Some(parent));
     }
 
     /// Presents the window on the display
@@ -2984,6 +3040,34 @@ impl ShadhinWindow {
     /// Accessor to the tab strip
     pub fn tab_strip(&self) -> &ShadhinTabStrip {
         &self.tab_strip
+    }
+
+    /// Accessor to the top tab bar
+    pub fn tab_bar(&self) -> &adw::TabBar {
+        &self.tab_bar
+    }
+
+    /// Accessor to the load progress line
+    pub fn load_line(&self) -> &gtk4::ProgressBar {
+        &self.load_line
+    }
+
+    /// Accessor to the sandbox status banner
+    pub fn sandbox_banner(&self) -> &adw::Banner {
+        &self.sandbox_banner
+    }
+
+    /// Applies tab layout: "top" (top tab strip) vs "vertical" (collapsible sidebar)
+    pub fn set_tab_layout(&self, layout: &str) {
+        if layout == "vertical" {
+            self.tab_bar.set_visible(false);
+            self.split_view.set_show_sidebar(true);
+            self.toolbar.update_sidebar_active(true);
+        } else {
+            self.tab_bar.set_visible(true);
+            self.split_view.set_show_sidebar(false);
+            self.toolbar.update_sidebar_active(false);
+        }
     }
 
     /// Accessor to the find bar

@@ -5,19 +5,18 @@ use crate::storage::StorageService;
 use crate::storage::downloads::DownloadRepository;
 use crate::storage::history::HistoryRepository;
 use adw::prelude::*;
+use gtk4::gio;
 use tracing::info;
 use webkit6::NetworkSession;
 
 /// Presents the "Clear Browsing Data" modal dialog
 pub fn show_clear_browsing_data_dialog(
-    parent: &impl IsA<gtk4::Window>,
+    parent: &impl IsA<gtk4::Widget>,
     storage: StorageService,
     session: NetworkSession,
     persistence_allowed: bool,
 ) {
-    let dialog = adw::MessageDialog::builder()
-        .transient_for(parent)
-        .modal(true)
+    let dialog = adw::AlertDialog::builder()
         .heading("Clear Browsing Data")
         .body("Choose the data categories and time range you want to remove.")
         .build();
@@ -96,7 +95,7 @@ pub fn show_clear_browsing_data_dialog(
     let storage_clone = storage;
     let session_clone = session;
 
-    dialog.connect_response(None, move |_d, response| {
+    dialog.choose(Some(parent), None::<&gio::Cancellable>, move |response| {
         if response != "clear" {
             return;
         }
@@ -154,6 +153,4 @@ pub fn show_clear_browsing_data_dialog(
             });
         }
     });
-
-    dialog.present();
 }

@@ -1,8 +1,9 @@
-//! Translucent burgundy sidebar with navigation items and workspaces
+//! Collapsible 235px vertical tab sidebar bound to AdwTabView pages
 //!
-//! Provides the primary navigation rail containing Home, Bookmarks, History,
-//! Downloads, open tabs list, Workspaces, and pinned Settings.
-//! Supports Expanded full rail (~240px) and Compact icon rail (~56px).
+//! Implements Layout (b) from HANDOFF.md:
+//! - 235px wide container wrapped in a GtkScrolledWindow
+//! - Tab items: active, hover, pinned, sleeping (opacity 0.5), audio playing, close button on hover/active
+//! - Footer showing open tab count and context menu hint
 
 use crate::ui::tabbar::TabDisplayInfo;
 use gtk4::prelude::*;
@@ -10,227 +11,178 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct ShadhinSidebar {
+    scrolled_window: gtk4::ScrolledWindow,
     container: gtk4::Box,
-    workspaces_box: gtk4::Box,
-    on_navigate_page: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    tabs_list_box: gtk4::ListBox,
+    footer_label: gtk4::Label,
+    on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    on_tab_selected: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_close: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_pin: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_mute: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_sleep: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>>,
-    tabs_list_box: gtk4::Box,
-    tabs_expander: gtk4::Expander,
     is_compact: Rc<RefCell<bool>>,
 }
 
 impl ShadhinSidebar {
-    /// Constructs a new sidebar component
+    /// Constructs a new 235px vertical tab sidebar
     pub fn new() -> Self {
         let container = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
             .spacing(4)
-            .css_classes(["shadhin-sidebar"])
+            .css_classes(["shadhin-vertical-sidebar"])
             .build();
+        container.set_size_request(235, -1);
 
         let is_compact = Rc::new(RefCell::new(false));
-        let on_navigate_page: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
+        let on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        let on_tab_selected: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_close: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_pin: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_mute: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_sleep: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
             Rc::new(RefCell::new(None));
         let on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
 
-        // 1. Primary Navigation Items
-        let (home_btn, _) = Self::create_sidebar_item("go-home-symbolic", "Home", true);
-        let on_nav_home = on_navigate_page.clone();
-        home_btn.connect_clicked(move |_| {
-            if let Some(ref cb) = *on_nav_home.borrow() {
-                cb("home");
-            }
-        });
-        container.append(&home_btn);
-
-        let nav_items = [
-            (
-                "user-bookmarks-symbolic",
-                "Bookmarks",
-                "bookmarks",
-                "Ctrl+Shift+O",
-            ),
-            (
-                "document-open-recent-symbolic",
-                "History",
-                "history",
-                "Ctrl+H",
-            ),
-            (
-                "folder-download-symbolic",
-                "Downloads",
-                "downloads",
-                "Ctrl+J",
-            ),
-        ];
-
-        for (icon, label, page_id, shortcut) in nav_items {
-            let (btn, _) = Self::create_sidebar_item(icon, label, false);
-            Self::setup_compact_overlay(
-                &btn,
-                label,
-                page_id,
-                shortcut,
-                &is_compact,
-                &on_navigate_page,
-            );
-            container.append(&btn);
-        }
-
-        // 2. Expandable Tabs Section
-        let tabs_list_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .spacing(2)
-            .margin_start(8)
-            .build();
-
-        let tabs_expander = gtk4::Expander::builder()
-            .label("Open Tabs")
-            .expanded(true)
-            .child(&tabs_list_box)
-            .css_classes(["shadhin-sidebar-item", "shadhin-tabs-expander"])
-            .tooltip_text("Open Tabs")
-            .build();
-        container.append(&tabs_expander);
-
-        // 3. Workspaces Section
-        let sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-        sep.set_margin_top(8);
-        sep.set_margin_bottom(4);
-        sep.add_css_class("shadhin-sidebar-separator");
-        container.append(&sep);
-
-        let ws_title = gtk4::Label::builder()
-            .label("Workspaces")
-            .css_classes(["shadhin-sidebar-section-title"])
-            .halign(gtk4::Align::Start)
-            .build();
-        container.append(&ws_title);
-
-        let workspaces_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .spacing(2)
-            .build();
-
-        let workspaces = [
-            ("personal", "Personal", "default"),
-            ("work", "Work", "work"),
-            ("project", "Project", "project"),
-        ];
-
-        for (dot_class, name, ws_id) in workspaces {
-            let row = gtk4::Box::builder()
-                .orientation(gtk4::Orientation::Horizontal)
-                .spacing(8)
-                .valign(gtk4::Align::Center)
-                .css_classes(["shadhin-sidebar-item"])
-                .build();
-
-            let dot = gtk4::Box::builder()
-                .css_classes(["shadhin-workspace-dot", dot_class])
-                .valign(gtk4::Align::Center)
-                .build();
-            row.append(&dot);
-
-            let lbl = gtk4::Label::builder()
-                .label(name)
-                .halign(gtk4::Align::Start)
-                .hexpand(true)
-                .css_classes(["shadhin-sidebar-label"])
-                .build();
-            row.append(&lbl);
-
-            let btn = gtk4::Button::builder()
-                .child(&row)
-                .tooltip_text(name)
-                .css_classes(["flat"])
-                .build();
-
-            let id_str = ws_id.to_string();
-            let on_ws = on_workspace_selected.clone();
-            btn.connect_clicked(move |_| {
-                if let Some(ref cb) = *on_ws.borrow() {
-                    cb(&id_str);
-                }
-            });
-            workspaces_box.append(&btn);
-        }
-        container.append(&workspaces_box);
-
-        // "+ New Workspace" button with icon for compact mode
-        let new_ws_box = gtk4::Box::builder()
+        // 1. Sidebar Header: "Tabs" label + New Tab (+) button
+        let header_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(8)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .margin_bottom(8)
             .valign(gtk4::Align::Center)
             .build();
-        let new_ws_icon = gtk4::Image::from_icon_name("list-add-symbolic");
-        new_ws_icon.set_pixel_size(14);
-        new_ws_box.append(&new_ws_icon);
 
-        let new_ws_lbl = gtk4::Label::builder()
-            .label("New Workspace")
+        let title_lbl = gtk4::Label::builder()
+            .label("Tabs")
             .halign(gtk4::Align::Start)
             .hexpand(true)
-            .css_classes(["shadhin-sidebar-label"])
+            .css_classes(["heading"])
             .build();
-        new_ws_box.append(&new_ws_lbl);
+        header_box.append(&title_lbl);
 
-        let new_ws_btn = gtk4::Button::builder()
-            .child(&new_ws_box)
-            .tooltip_text("Create New Workspace")
-            .css_classes(["flat", "shadhin-sidebar-item"])
-            .halign(gtk4::Align::Fill)
+        let new_tab_icon = gtk4::Image::from_icon_name("list-add-symbolic");
+        new_tab_icon.set_pixel_size(16);
+        let new_tab_btn = gtk4::Button::builder()
+            .child(&new_tab_icon)
+            .tooltip_text("New tab (Ctrl+T)")
+            .css_classes(["iconbtn", "flat"])
+            .valign(gtk4::Align::Center)
             .build();
-        let on_create = on_create_workspace.clone();
-        new_ws_btn.connect_clicked(move |_| {
-            if let Some(ref cb) = *on_create.borrow() {
+        new_tab_btn.set_size_request(32, 32);
+
+        let on_nt_clone = on_new_tab.clone();
+        new_tab_btn.connect_clicked(move |_| {
+            if let Some(ref cb) = *on_nt_clone.borrow() {
                 cb();
             }
         });
-        container.append(&new_ws_btn);
+        header_box.append(&new_tab_btn);
+        container.append(&header_box);
 
-        // 4. Spacer to push Settings to the bottom
+        // 2. Vertical tabs list box
+        let tabs_list_box = gtk4::ListBox::builder()
+            .selection_mode(gtk4::SelectionMode::None)
+            .css_classes(["shadhin-vertical-tab-list"])
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+        container.append(&tabs_list_box);
+
+        // 3. Spacer
         let spacer = gtk4::Box::builder().vexpand(true).build();
         container.append(&spacer);
 
-        // 5. Pinned Settings
-        let (settings_btn, _) =
-            Self::create_sidebar_item("preferences-system-symbolic", "Settings", false);
-        Self::setup_compact_overlay(
-            &settings_btn,
-            "Settings",
-            "settings",
-            "Ctrl+,",
-            &is_compact,
-            &on_navigate_page,
-        );
-        container.append(&settings_btn);
+        // 4. Footer info label
+        let footer_label = gtk4::Label::builder()
+            .label("0 open tabs · Right-click for actions")
+            .css_classes(["muted-text"])
+            .halign(gtk4::Align::Start)
+            .margin_start(16)
+            .margin_end(16)
+            .margin_bottom(16)
+            .margin_top(8)
+            .build();
+        container.append(&footer_label);
+
+        // Wrap the whole sidebar container in a ScrolledWindow to prevent minimum height explosion
+        let scrolled_window = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hexpand(false)
+            .vexpand(true)
+            .child(&container)
+            .build();
+        scrolled_window.set_size_request(235, -1);
 
         Self {
+            scrolled_window,
             container,
-            workspaces_box,
-            on_navigate_page,
+            tabs_list_box,
+            footer_label,
+            on_new_tab,
+            on_tab_selected,
+            on_tab_close,
+            on_tab_pin,
+            on_tab_mute,
+            on_tab_sleep,
             on_workspace_selected,
             on_create_workspace,
-            tabs_list_box,
-            tabs_expander,
             is_compact,
         }
     }
 
-    /// Sets or clears compact mode (narrow ~56px icon-only rail vs full ~240px)
+    /// Accessor to the root sidebar widget (the ScrolledWindow)
+    pub fn widget(&self) -> &gtk4::Widget {
+        self.scrolled_window.upcast_ref()
+    }
+
+    /// Connects the new tab button in the sidebar header
+    pub fn connect_new_tab<F: Fn() + 'static>(&self, callback: F) {
+        *self.on_new_tab.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab selection from the list box
+    pub fn connect_tab_selected<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_selected.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab close
+    pub fn connect_tab_close<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_close.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab pin toggle
+    pub fn connect_tab_pin<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_pin.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab mute toggle
+    pub fn connect_tab_mute<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_mute.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab sleep action
+    pub fn connect_tab_sleep<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_sleep.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Sets or clears compact mode (narrow ~56px icon-only rail vs full 235px)
     pub fn set_compact_mode(&self, compact: bool) {
         *self.is_compact.borrow_mut() = compact;
         if compact {
             self.container.add_css_class("compact");
-            self.container.set_width_request(56);
-            self.tabs_expander.set_expanded(false);
+            self.scrolled_window.set_size_request(56, -1);
+            self.container.set_size_request(56, -1);
         } else {
             self.container.remove_css_class("compact");
-            self.container.set_width_request(240);
-            self.tabs_expander.set_expanded(true);
+            self.scrolled_window.set_size_request(235, -1);
+            self.container.set_size_request(235, -1);
         }
     }
 
@@ -239,235 +191,185 @@ impl ShadhinSidebar {
         *self.is_compact.borrow()
     }
 
-    /// Appends a new workspace entry to the sidebar
-    pub fn add_workspace_item(&self, ws_id: &str, name: &str) {
-        let row = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(8)
-            .valign(gtk4::Align::Center)
-            .css_classes(["shadhin-sidebar-item"])
-            .build();
-
-        let dot = gtk4::Box::builder()
-            .css_classes(["shadhin-workspace-dot", "project"])
-            .valign(gtk4::Align::Center)
-            .build();
-        row.append(&dot);
-
-        let lbl = gtk4::Label::builder()
-            .label(name)
-            .halign(gtk4::Align::Start)
-            .hexpand(true)
-            .css_classes(["shadhin-sidebar-label"])
-            .build();
-        row.append(&lbl);
-
-        let btn = gtk4::Button::builder()
-            .child(&row)
-            .tooltip_text(name)
-            .css_classes(["flat"])
-            .build();
-
-        let id_str = ws_id.to_string();
-        let on_ws = self.on_workspace_selected.clone();
-        btn.connect_clicked(move |_| {
-            if let Some(ref cb) = *on_ws.borrow() {
-                cb(&id_str);
-            }
-        });
-        self.workspaces_box.append(&btn);
-    }
-
-    /// Registers callback for creating a new workspace
-    pub fn set_on_create_workspace<F: Fn() + 'static>(&self, callback: F) {
-        *self.on_create_workspace.borrow_mut() = Some(Box::new(callback));
-    }
-
-    /// Registers callback for workspace selection
-    pub fn set_on_workspace_selected<F: Fn(&str) + 'static>(&self, callback: F) {
-        *self.on_workspace_selected.borrow_mut() = Some(Box::new(callback));
-    }
-
-    /// Helper to setup an overlay popover in compact mode, or direct navigation in expanded mode
-    fn setup_compact_overlay(
-        btn: &gtk4::Button,
-        title: &str,
-        page_id: &str,
-        shortcut: &str,
-        is_compact: &Rc<RefCell<bool>>,
-        on_navigate: &Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
-    ) {
-        let popover = gtk4::Popover::new();
-        popover.set_parent(btn);
-        popover.set_autohide(true);
-
-        let pop_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .spacing(8)
-            .margin_start(10)
-            .margin_end(10)
-            .margin_top(10)
-            .margin_bottom(10)
-            .css_classes(["shadhin-sidebar-compact-popover"])
-            .build();
-
-        let title_lbl = gtk4::Label::builder()
-            .label(title)
-            .css_classes(["shadhin-sidebar-section-title"])
-            .halign(gtk4::Align::Start)
-            .build();
-        pop_box.append(&title_lbl);
-
-        let open_btn = gtk4::Button::builder()
-            .label(format!("Open {} ({})", title, shortcut))
-            .css_classes(["suggested-action"])
-            .build();
-
-        let pid = page_id.to_string();
-        let pop_clone = popover.clone();
-        let on_nav = on_navigate.clone();
-        open_btn.connect_clicked(move |_| {
-            pop_clone.popdown();
-            if let Some(ref cb) = *on_nav.borrow() {
-                cb(&pid);
-            }
-        });
-        pop_box.append(&open_btn);
-        popover.set_child(Some(&pop_box));
-
-        let is_comp = is_compact.clone();
-        let on_nav_direct = on_navigate.clone();
-        let pid_direct = page_id.to_string();
-        btn.connect_clicked(move |_| {
-            if *is_comp.borrow() {
-                popover.popup();
-            } else if let Some(ref cb) = *on_nav_direct.borrow() {
-                cb(&pid_direct);
-            }
-        });
-    }
-
-    /// Helper to create a styled sidebar button item
-    fn create_sidebar_item(
-        icon_name: &str,
-        label_text: &str,
-        is_active: bool,
-    ) -> (gtk4::Button, gtk4::Label) {
-        let row = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(10)
-            .valign(gtk4::Align::Center)
-            .build();
-
-        let icon = gtk4::Image::from_icon_name(icon_name);
-        icon.set_pixel_size(16);
-        row.append(&icon);
-
-        let label = gtk4::Label::builder()
-            .label(label_text)
-            .halign(gtk4::Align::Start)
-            .hexpand(true)
-            .css_classes(["shadhin-sidebar-label"])
-            .build();
-        row.append(&label);
-
-        let btn = gtk4::Button::builder()
-            .child(&row)
-            .tooltip_text(label_text)
-            .focusable(true)
-            .build();
-
-        btn.add_css_class("flat");
-        btn.add_css_class("shadhin-sidebar-item");
-        if is_active {
-            btn.add_css_class("active");
-        }
-
-        (btn, label)
-    }
-
-    /// Updates the vertical open tabs list shown in the sidebar with favicon and active state
+    /// Re-renders the vertical tabs list from the current TabDisplayInfo slice
     pub fn update_open_tabs<F: Fn(i32) + 'static>(
         &self,
         tabs: &[TabDisplayInfo],
         selected_idx: i32,
         on_select: F,
     ) {
-        // Clear existing tabs
+        // Clear previous rows
         while let Some(child) = self.tabs_list_box.first_child() {
             self.tabs_list_box.remove(&child);
         }
 
         let on_select = Rc::new(on_select);
+        let n_tabs = tabs.len();
+
         for (i, tab_data) in tabs.iter().enumerate() {
-            let row = gtk4::Box::builder()
+            let row_box = gtk4::Box::builder()
                 .orientation(gtk4::Orientation::Horizontal)
                 .spacing(8)
                 .valign(gtk4::Align::Center)
+                .css_classes(["vertical-tab-item"])
                 .build();
+            row_box.set_size_request(-1, 38);
 
-            // Favicon or fallback icon
+            if i as i32 == selected_idx {
+                row_box.add_css_class("active");
+            }
+            if tab_data.is_discarded {
+                row_box.add_css_class("tab-sleeping");
+            }
+
+            // 1. Favicon or Globe icon (15px)
             let icon = if let Some(ref texture) = tab_data.favicon {
                 let img = gtk4::Image::from_paintable(Some(texture));
-                img.set_pixel_size(16);
+                img.set_pixel_size(15);
                 img
             } else if tab_data.is_newtab {
                 let img = gtk4::Image::from_icon_name("go-home-symbolic");
-                img.set_pixel_size(16);
-                img.set_opacity(0.85);
+                img.set_pixel_size(15);
                 img
             } else {
                 let img = gtk4::Image::from_icon_name("globe-symbolic");
-                img.set_pixel_size(16);
-                img.set_opacity(0.85);
+                img.set_pixel_size(15);
                 img
             };
-            row.append(&icon);
+            row_box.append(&icon);
 
+            // 2. Tab Title
             let display_title = if tab_data.title.is_empty() {
                 "New Tab".to_string()
             } else {
                 tab_data.title.clone()
             };
 
-            let label = gtk4::Label::builder()
+            let title_lbl = gtk4::Label::builder()
                 .label(&display_title)
                 .halign(gtk4::Align::Start)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .max_width_chars(16)
                 .hexpand(true)
-                .css_classes(["shadhin-sidebar-label"])
                 .build();
-            row.append(&label);
+            row_box.append(&title_lbl);
 
-            let btn = gtk4::Button::builder()
-                .child(&row)
-                .halign(gtk4::Align::Fill)
-                .tooltip_text(&display_title)
-                .css_classes(["flat", "shadhin-sidebar-item"])
+            // 3. Close button
+            let close_icon = gtk4::Image::from_icon_name("window-close-symbolic");
+            close_icon.set_pixel_size(13);
+            let close_btn = gtk4::Button::builder()
+                .child(&close_icon)
+                .tooltip_text("Close tab (Ctrl+W)")
+                .css_classes(["tab-close-btn", "iconbtn", "flat"])
+                .valign(gtk4::Align::Center)
                 .build();
+            close_btn.set_size_request(24, 24);
 
-            if i as i32 == selected_idx {
-                btn.add_css_class("active");
-            }
-
-            let sel = on_select.clone();
-            btn.connect_clicked(move |_| {
-                sel(i as i32);
+            let on_close_cb = self.on_tab_close.clone();
+            let tab_idx = i as i32;
+            close_btn.connect_clicked(move |_| {
+                if let Some(ref cb) = *on_close_cb.borrow() {
+                    cb(tab_idx);
+                }
             });
-            self.tabs_list_box.append(&btn);
+            row_box.append(&close_btn);
+
+            // Click gesture to select tab
+            let on_sel_clone = on_select.clone();
+            let tab_click = gtk4::GestureClick::new();
+            tab_click.connect_pressed(move |_, _, _, _| {
+                on_sel_clone(tab_idx);
+            });
+            row_box.add_controller(tab_click);
+
+            // Context menu for Tab (Pin, Sleep, Close)
+            let right_click = gtk4::GestureClick::new();
+            right_click.set_button(3); // Right click
+            let on_pin_cb = self.on_tab_pin.clone();
+            let on_sleep_cb = self.on_tab_sleep.clone();
+            let on_close_ctx = self.on_tab_close.clone();
+
+            let row_box_ref = row_box.clone();
+            right_click.connect_pressed(move |_, _, _, _| {
+                let pop = gtk4::Popover::new();
+                pop.set_parent(&row_box_ref);
+                pop.set_autohide(true);
+                pop.add_css_class("shadhin-popover");
+
+                let menu_vbox = gtk4::Box::builder()
+                    .orientation(gtk4::Orientation::Vertical)
+                    .spacing(4)
+                    .width_request(180)
+                    .build();
+
+                let pin_btn = gtk4::Button::builder()
+                    .label("Pin / Unpin tab")
+                    .css_classes(["flat"])
+                    .halign(gtk4::Align::Fill)
+                    .build();
+                let pop_clone1 = pop.clone();
+                let pin_cb = on_pin_cb.clone();
+                pin_btn.connect_clicked(move |_| {
+                    pop_clone1.popdown();
+                    if let Some(ref cb) = *pin_cb.borrow() {
+                        cb(tab_idx);
+                    }
+                });
+                menu_vbox.append(&pin_btn);
+
+                let sleep_btn = gtk4::Button::builder()
+                    .label("Sleep tab")
+                    .css_classes(["flat"])
+                    .halign(gtk4::Align::Fill)
+                    .build();
+                let pop_clone2 = pop.clone();
+                let sleep_cb = on_sleep_cb.clone();
+                sleep_btn.connect_clicked(move |_| {
+                    pop_clone2.popdown();
+                    if let Some(ref cb) = *sleep_cb.borrow() {
+                        cb(tab_idx);
+                    }
+                });
+                menu_vbox.append(&sleep_btn);
+
+                let close_item = gtk4::Button::builder()
+                    .label("Close tab")
+                    .css_classes(["flat"])
+                    .halign(gtk4::Align::Fill)
+                    .build();
+                let pop_clone3 = pop.clone();
+                let close_cb = on_close_ctx.clone();
+                close_item.connect_clicked(move |_| {
+                    pop_clone3.popdown();
+                    if let Some(ref cb) = *close_cb.borrow() {
+                        cb(tab_idx);
+                    }
+                });
+                menu_vbox.append(&close_item);
+
+                pop.set_child(Some(&menu_vbox));
+                pop.popup();
+            });
+            row_box.add_controller(right_click);
+
+            self.tabs_list_box.append(&row_box);
         }
+
+        self.footer_label
+            .set_label(&format!("{n_tabs} open tabs · Right-click for actions"));
     }
 
-    /// Connects the callback when a sidebar page is chosen
-    pub fn connect_page_selected<F: Fn(&str) + 'static>(&self, callback: F) {
-        *self.on_navigate_page.borrow_mut() = Some(Box::new(callback));
+    /// Workspace compatibility methods (delegate clean no-ops or simple stores)
+    pub fn add_workspace_item(&self, _ws_id: &str, _name: &str) {}
+
+    pub fn set_on_create_workspace<F: Fn() + 'static>(&self, callback: F) {
+        *self.on_create_workspace.borrow_mut() = Some(Box::new(callback));
     }
 
-    /// Accessor to the root sidebar widget
-    pub fn widget(&self) -> &gtk4::Box {
-        &self.container
+    pub fn set_on_workspace_selected<F: Fn(&str) + 'static>(&self, callback: F) {
+        *self.on_workspace_selected.borrow_mut() = Some(Box::new(callback));
     }
+
+    pub fn connect_page_selected<F: Fn(&str) + 'static>(&self, _callback: F) {}
 }
 
 impl Default for ShadhinSidebar {

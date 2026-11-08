@@ -18,8 +18,10 @@ pub struct AddressBar {
     entry: gtk4::Entry,
     progress_bar: gtk4::ProgressBar,
     shield_icon: gtk4::Image,
+    lock_btn: gtk4::Button,
     star_btn: gtk4::Button,
     star_icon: gtk4::Image,
+    reader_btn: gtk4::Button,
     on_activate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     storage: RefCell<Option<StorageService>>,
     current_url: Rc<RefCell<String>>,
@@ -43,32 +45,48 @@ impl AddressBar {
         // 1. Pill horizontal box
         let pill_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .spacing(6)
-            .css_classes(["shadhin-address-box"])
+            .spacing(4)
+            .css_classes(["address-pill"])
             .hexpand(true)
             .valign(gtk4::Align::Center)
             .build();
 
-        let shield_icon = gtk4::Image::from_icon_name("security-high-symbolic");
-        shield_icon.set_opacity(0.85);
-        shield_icon.set_tooltip_text(Some("Site security information"));
-        pill_box.append(&shield_icon);
+        let shield_icon = gtk4::Image::from_icon_name("channel-secure-symbolic");
+        shield_icon.set_pixel_size(17);
+        let lock_btn = gtk4::Button::builder()
+            .child(&shield_icon)
+            .tooltip_text("Site information and privacy")
+            .css_classes(["iconbtn", "flat"])
+            .valign(gtk4::Align::Center)
+            .build();
+        pill_box.append(&lock_btn);
 
         let entry = gtk4::Entry::builder()
-            .placeholder_text("Search or enter website address")
+            .placeholder_text("Search or enter address · বাংলায় খুঁজুন")
             .hexpand(true)
             .css_classes(["shadhin-address-entry"])
             .build();
         pill_box.append(&entry);
 
         let star_icon = gtk4::Image::from_icon_name("non-starred-symbolic");
+        star_icon.set_pixel_size(17);
         let star_btn = gtk4::Button::builder()
             .child(&star_icon)
-            .tooltip_text("Bookmark this tab")
-            .css_classes(["shadhin-nav-btn"])
+            .tooltip_text("Bookmark this page")
+            .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
             .build();
         pill_box.append(&star_btn);
+
+        let reader_icon = gtk4::Image::from_icon_name("view-reader-symbolic");
+        reader_icon.set_pixel_size(17);
+        let reader_btn = gtk4::Button::builder()
+            .child(&reader_icon)
+            .tooltip_text("Reader mode")
+            .css_classes(["iconbtn", "flat"])
+            .valign(gtk4::Align::Center)
+            .build();
+        pill_box.append(&reader_btn);
 
         container.append(&pill_box);
 
@@ -121,8 +139,10 @@ impl AddressBar {
             entry,
             progress_bar,
             shield_icon,
+            lock_btn,
             star_btn,
             star_icon,
+            reader_btn,
             on_activate,
             storage: RefCell::new(None),
             current_url,
@@ -497,6 +517,27 @@ impl AddressBar {
                 }
             });
         });
+    }
+
+    pub fn lock_button(&self) -> &gtk4::Button {
+        &self.lock_btn
+    }
+
+    pub fn reader_button(&self) -> &gtk4::Button {
+        &self.reader_btn
+    }
+
+    pub fn set_tls_state(&self, has_tls: bool, valid: bool) {
+        if !has_tls {
+            self.shield_icon.set_icon_name(Some("security-high-symbolic"));
+            self.shield_icon.set_tooltip_text(Some("No secure site connection"));
+        } else if valid {
+            self.shield_icon.set_icon_name(Some("channel-secure-symbolic"));
+            self.shield_icon.set_tooltip_text(Some("Connection secure"));
+        } else {
+            self.shield_icon.set_icon_name(Some("channel-insecure-symbolic"));
+            self.shield_icon.set_tooltip_text(Some("Certificate error: connection insecure"));
+        }
     }
 
     fn create_suggestion_row(

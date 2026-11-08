@@ -104,8 +104,8 @@ impl ShadhinTabStrip {
             if let Some(tab_data) = info
                 && tab_data.is_discarded
             {
-                tab_btn.add_css_class("discarded");
-                tab_btn.set_opacity(0.70);
+                tab_btn.add_css_class("tab-sleeping");
+                tab_btn.set_opacity(0.5);
             }
 
             // Real favicon or fallback icon

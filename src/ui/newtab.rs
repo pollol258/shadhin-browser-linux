@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct ShadhinNewTab {
+    scrolled_window: gtk4::ScrolledWindow,
     container: gtk4::Box,
     shortcuts_box: gtk4::Box,
     recent_box: gtk4::Box,
@@ -26,9 +27,21 @@ impl ShadhinNewTab {
         let container = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
             .spacing(20)
-            .valign(gtk4::Align::Center)
+            .valign(gtk4::Align::Start)
             .halign(gtk4::Align::Center)
+            .margin_top(32)
+            .margin_bottom(32)
+            .margin_start(16)
+            .margin_end(16)
             .css_classes(["shadhin-newtab-container"])
+            .build();
+
+        let scrolled_window = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hexpand(true)
+            .vexpand(true)
+            .child(&container)
             .build();
 
         let on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
@@ -180,6 +193,7 @@ impl ShadhinNewTab {
         let storage: Rc<RefCell<Option<StorageService>>> = Rc::new(RefCell::new(None));
 
         Self {
+            scrolled_window,
             container,
             shortcuts_box,
             recent_box,
@@ -575,8 +589,8 @@ impl ShadhinNewTab {
     }
 
     /// Accessor to the root widget
-    pub fn widget(&self) -> &gtk4::Box {
-        &self.container
+    pub fn widget(&self) -> &gtk4::ScrolledWindow {
+        &self.scrolled_window
     }
 }
 
