@@ -18,6 +18,7 @@ pub mod privacy_panel;
 pub mod settings;
 pub mod sidebar;
 pub mod tabbar;
+pub mod theme;
 pub mod titlebar;
 pub mod toolbar;
 pub mod window;
@@ -25,10 +26,11 @@ pub mod window;
 use gtk4::gdk::Display;
 use gtk4::gio;
 use gtk4::glib;
+use theme::ThemeManager;
 use tracing::info;
 
-/// Initializes the GResource bundle and applies the Shadhin glassmorphic GTK4 CSS theme.
-pub fn setup_theme() {
+/// Initializes the GResource bundle and applies the Shadhin tokens GTK4 CSS theme.
+pub fn setup_theme(initial_accent: Option<&str>, color_scheme: Option<&str>) -> ThemeManager {
     // 1. Register compiled GResource bundle
     let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/shadhin.gresource"));
     match gio::Resource::from_data(&glib::Bytes::from_static(bytes)) {
@@ -41,7 +43,7 @@ pub fn setup_theme() {
         }
     }
 
-    // 2. Load CSS provider
+    // 2. Load Base CSS provider from GResource or local file
     let provider = gtk4::CssProvider::new();
     let dev_mode = std::env::var("SHADHIN_DEV_CSS").is_ok();
 
@@ -61,4 +63,10 @@ pub fn setup_theme() {
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+
+    // 4. Initialize dynamic tokens provider (accent, light/dark, reduced motion)
+    let theme_mgr = ThemeManager::new();
+    theme_mgr.init(initial_accent, color_scheme);
+    theme::set_global_theme_manager(theme_mgr.clone());
+    theme_mgr
 }

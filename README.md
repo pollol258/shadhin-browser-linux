@@ -9,7 +9,7 @@ Application ID: `com.shadhin.browser`
 
 ## 1. System Dependencies by Distribution
 
-Shadhin Browser requires **WebKitGTK 6.0** (WebKit 2.40+), **GTK 4.10+**, and **Libadwaita 1.4+**.
+Shadhin Browser requires **WebKitGTK 6.0** (WebKit 2.40+), **GTK 4.10+**, and **Libadwaita 1.6+** (for AdwAlertDialog and AdwPreferencesDialog support).
 
 ### Ubuntu / Debian
 > **Minimum Supported Releases:**

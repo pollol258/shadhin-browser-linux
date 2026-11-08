@@ -1,0 +1,630 @@
+/* ====================================================================
+ * Shadhin Browser — Glassmorphism Theme (Dark Scheme)
+ * Precision re-sampled from ui-reference.png (vivid crimson to emerald)
+ * ==================================================================== */
+
+@define-color shadhin_bg_burgundy #81123c;
+@define-color shadhin_bg_mid_wine #632646;
+@define-color shadhin_bg_mid_slate #384652;
+@define-color shadhin_bg_emerald #29b876;
+@define-color shadhin_frame_border rgba(41, 184, 118, 0.38);
+@define-color shadhin_frame_bg rgba(18, 14, 22, 0.92);
+@define-color shadhin_titlebar_bg rgba(125, 45, 82, 0.72);
+@define-color shadhin_toolbar_bg rgba(63, 48, 76, 0.75);
+@define-color shadhin_pill_bg rgba(55, 42, 68, 0.82);
+@define-color shadhin_pill_border rgba(255, 255, 255, 0.20);
+@define-color shadhin_pill_focus rgba(244, 63, 94, 0.50);
+@define-color shadhin_tab_active rgba(185, 145, 170, 0.38);
+@define-color shadhin_tab_active_border rgba(255, 255, 255, 0.40);
+@define-color shadhin_tab_inactive rgba(40, 15, 30, 0.35);
+@define-color shadhin_tab_hover rgba(255, 255, 255, 0.16);
+@define-color shadhin_accent_coral #f43f5e;
+@define-color shadhin_accent_orange #fb923c;
+@define-color shadhin_text_primary #ffffff;
+@define-color shadhin_text_secondary rgba(255, 255, 255, 0.82);
+@define-color shadhin_text_muted rgba(255, 255, 255, 0.52);
+
+/* --- Main Window & Outer Gradient --- */
+.shadhin-window {
+  background: linear-gradient(135deg, @shadhin_bg_burgundy 0%, @shadhin_bg_mid_wine 30%, @shadhin_bg_mid_slate 66%, @shadhin_bg_emerald 100%);
+  color: @shadhin_text_primary;
+}
+
+/* --- Header / Title Bar Row --- */
+.shadhin-titlebar {
+  background: @shadhin_titlebar_bg;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 4px 8px;
+  min-height: 44px;
+}
+
+.shadhin-sidebar-toggle-btn {
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  color: @shadhin_text_secondary;
+  transition: all 150ms ease;
+}
+
+.shadhin-sidebar-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.shadhin-sidebar-toggle-btn.active {
+  color: #ffffff;
+  background: rgba(244, 63, 94, 0.22);
+}
+
+.shadhin-brand-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #ffffff;
+  margin-left: 6px;
+  margin-right: 12px;
+}
+
+/* --- Tab Strip --- */
+.shadhin-tab-strip {
+  margin: 0 4px;
+}
+
+.shadhin-tab {
+  background: @shadhin_tab_inactive;
+  border-radius: 10px 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 12px;
+  margin: 0 2px;
+  min-width: 140px;
+  transition: all 180ms ease-in-out;
+}
+
+.shadhin-tab:hover {
+  background: @shadhin_tab_hover;
+}
+
+.shadhin-tab.active {
+  background: @shadhin_tab_active;
+  border-top: 1px solid @shadhin_tab_active_border;
+  border-left: 1px solid rgba(255, 255, 255, 0.20);
+  border-right: 1px solid rgba(255, 255, 255, 0.20);
+}
+
+.shadhin-tab.discarded {
+  opacity: 0.70;
+}
+
+.shadhin-tab.discarded .shadhin-tab-title {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.shadhin-tab-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.shadhin-tab-favicon {
+  border-radius: 4px;
+  margin-right: 2px;
+}
+
+.shadhin-tab-close {
+  border-radius: 9999px;
+  padding: 2px;
+  min-width: 18px;
+  min-height: 18px;
+  opacity: 0.7;
+}
+
+.shadhin-tab-close:hover {
+  opacity: 1.0;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.shadhin-tab-new-btn {
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: transparent;
+  color: @shadhin_text_secondary;
+}
+
+.shadhin-tab-new-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+/* --- Toolbar Row --- */
+.shadhin-toolbar {
+  background: @shadhin_toolbar_bg;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 12px;
+}
+
+/* --- Bookmarks Bar --- */
+.shadhin-bookmarks-bar {
+  background: rgba(30, 10, 20, 0.65);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 12px;
+  min-height: 28px;
+}
+
+.shadhin-bookmarks-bar-chip {
+  border-radius: 6px;
+  padding: 2px 8px;
+  color: @shadhin_text_secondary;
+  font-size: 11px;
+}
+
+.shadhin-bookmarks-bar-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.shadhin-bookmarks-bar-empty {
+  color: @shadhin_text_muted;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.shadhin-nav-btn,
+menubutton.shadhin-nav-btn > button {
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  color: @shadhin_text_secondary;
+  transition: all 150ms ease;
+}
+
+.shadhin-nav-btn:hover,
+menubutton.shadhin-nav-btn > button:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.shadhin-nav-btn:disabled,
+menubutton.shadhin-nav-btn > button:disabled {
+  opacity: 0.35;
+}
+
+/* --- Pill Address Bar --- */
+.shadhin-address-box {
+  background: @shadhin_pill_bg;
+  border: 1px solid @shadhin_pill_border;
+  border-radius: 9999px;
+  padding: 0 12px;
+  min-height: 36px;
+  transition: all 180ms ease;
+}
+
+.shadhin-address-box:focus-within {
+  border-color: @shadhin_accent_coral;
+  box-shadow: 0 0 0 2px @shadhin_pill_focus;
+  background: rgba(65, 50, 78, 0.95);
+}
+
+.shadhin-address-entry {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #ffffff;
+  font-size: 13px;
+  min-height: 32px;
+}
+
+.shadhin-address-entry:focus {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.shadhin-progress-bar {
+  min-height: 2px;
+  margin-top: 2px;
+}
+
+.shadhin-progress-bar progress {
+  background: linear-gradient(90deg, #f43f5e 0%, #fb923c 100%);
+  border-radius: 1px;
+}
+
+.shadhin-progress-bar trough {
+  background: transparent;
+}
+
+/* --- Left Sidebar (Vivid Crimson/Burgundy Gradient) --- */
+.shadhin-sidebar {
+  background: linear-gradient(180deg, rgba(125, 25, 68, 0.75) 0%, rgba(165, 45, 88, 0.65) 50%, rgba(85, 22, 55, 0.78) 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 12px 8px;
+  min-width: 200px;
+}
+
+.shadhin-sidebar-item {
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 2px 0;
+  color: @shadhin_text_secondary;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 150ms ease;
+}
+
+.shadhin-sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.shadhin-sidebar-item.active {
+  background: rgba(244, 63, 94, 0.28);
+  color: #ffffff;
+  border-left: 3px solid @shadhin_accent_coral;
+}
+
+.shadhin-sidebar-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: @shadhin_text_muted;
+  margin: 14px 10px 4px 10px;
+}
+
+.shadhin-workspace-dot {
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 9999px;
+  margin-right: 8px;
+}
+
+.shadhin-workspace-dot.personal { background-color: #ec4899; }
+.shadhin-workspace-dot.work { background-color: #eab308; }
+.shadhin-workspace-dot.project { background-color: #10b981; }
+
+/* --- Compact Sidebar Mode (~56px Rail) --- */
+.shadhin-sidebar.compact {
+  min-width: 56px;
+  padding: 12px 4px;
+}
+
+.shadhin-sidebar.compact .shadhin-sidebar-label {
+  opacity: 0;
+}
+
+.shadhin-sidebar.compact .shadhin-sidebar-section-title {
+  opacity: 0;
+}
+
+.shadhin-sidebar.compact .shadhin-sidebar-separator {
+  margin: 8px 4px;
+}
+
+.shadhin-sidebar.compact .shadhin-sidebar-item {
+  padding: 8px 0;
+  margin: 2px 4px;
+  min-width: 44px;
+  min-height: 36px;
+}
+
+.shadhin-sidebar.compact .shadhin-sidebar-item.active {
+  border-left: none;
+  border-bottom: 2px solid @shadhin_accent_coral;
+}
+
+.shadhin-sidebar.compact .shadhin-workspace-dot {
+  margin-right: 0;
+  min-width: 12px;
+  min-height: 12px;
+}
+
+.shadhin-sidebar.compact .shadhin-tabs-expander arrow {
+  opacity: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shadhin-sidebar-compact-popover {
+  min-width: 180px;
+}
+
+/* --- Rounded Content Frame (Margin & Emerald Border) --- */
+.shadhin-content-frame {
+  border-radius: 16px;
+  border: 1px solid @shadhin_frame_border;
+  background: @shadhin_frame_bg;
+  margin: 6px 12px 12px 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* --- New Tab Dashboard --- */
+.shadhin-newtab-container {
+  padding: 40px 24px;
+}
+
+.shadhin-hero-title {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  margin-top: 14px;
+}
+
+.shadhin-hero-tagline {
+  font-size: 15px;
+  font-weight: 500;
+  color: @shadhin_text_secondary;
+  margin-top: 4px;
+  margin-bottom: 28px;
+}
+
+.shadhin-newtab-search-box {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  border-radius: 9999px;
+  padding: 4px 18px;
+  min-width: 440px;
+  min-height: 46px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  transition: all 180ms ease;
+}
+
+.shadhin-newtab-search-box:focus-within {
+  border-color: @shadhin_accent_coral;
+  box-shadow: 0 0 0 2px @shadhin_pill_focus, 0 8px 32px rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.shadhin-newtab-search-entry {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #ffffff;
+  font-size: 14px;
+}
+
+/* --- Shortcut Glass Cards --- */
+.shadhin-shortcut-grid {
+  margin-top: 36px;
+  margin-bottom: 36px;
+}
+
+.shadhin-shortcut-card {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 16px;
+  padding: 16px;
+  min-width: 110px;
+  min-height: 80px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shadhin-shortcut-card:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.24);
+  border-top-color: rgba(255, 255, 255, 0.42);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+.shadhin-shortcut-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: @shadhin_text_secondary;
+  margin-top: 6px;
+}
+
+/* --- Privacy Stats Glass Bar (Bottom / Card) --- */
+.shadhin-stats-card {
+  background: rgba(30, 20, 30, 0.70);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 16px;
+  padding: 16px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.30);
+  min-width: 260px;
+}
+
+.shadhin-stats-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.shadhin-stat-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.shadhin-stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: @shadhin_text_muted;
+}
+
+/* --- Privacy Shield Popover --- */
+.shadhin-popover {
+  background: rgba(38, 22, 36, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.50);
+}
+
+.shadhin-popover-header {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  margin-bottom: 10px;
+}
+
+.shadhin-popover-row {
+  padding: 6px 0;
+}
+
+.shadhin-popover-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: @shadhin_text_secondary;
+}
+
+.shadhin-popover-action {
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  color: @shadhin_text_secondary;
+  font-size: 13px;
+}
+
+.shadhin-popover-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+/* --- Placeholder / Coming Soon View --- */
+.shadhin-placeholder-box {
+  padding: 48px;
+}
+
+.shadhin-placeholder-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-top: 12px;
+}
+
+.shadhin-placeholder-badge {
+  background: rgba(244, 63, 94, 0.25);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  border-radius: 6px;
+  color: #fda4af;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  margin-top: 8px;
+}
+
+/* --- Error View --- */
+.shadhin-error-box {
+  padding: 48px;
+  background: rgba(30, 16, 24, 0.88);
+  border-radius: 16px;
+  border: 1px solid rgba(244, 63, 94, 0.38);
+  margin: 60px 24px;
+}
+
+.shadhin-error-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #f43f5e;
+}
+
+.shadhin-error-desc {
+  font-size: 13px;
+  color: @shadhin_text_secondary;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* --- Find in Page Bar --- */
+.shadhin-find-bar {
+  background: rgba(45, 24, 40, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 4px 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.shadhin-find-entry {
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #ffffff;
+  padding: 4px 8px;
+}
+
+.shadhin-find-entry:focus {
+  border-color: @shadhin_accent_coral;
+}
+
+.shadhin-find-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: @shadhin_text_secondary;
+  margin: 0 4px;
+}
+
+/* --- TLS Warning Page --- */
+.shadhin-tls-box {
+  padding: 40px;
+  background: rgba(36, 12, 18, 0.92);
+  border-radius: 16px;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  margin: 40px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.shadhin-tls-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #ef4444;
+}
+
+.shadhin-tls-desc {
+  font-size: 13px;
+  color: @shadhin_text_secondary;
+  line-height: 1.6;
+}
+
+
+/* --- Permission Prompt Bar --- */
+.shadhin-permission-bar {
+  background: rgba(48, 16, 28, 0.96);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 8px 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.shadhin-permission-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+/* --- HTTPS Fallback Interstitial --- */
+.shadhin-https-box {
+  padding: 40px;
+  background: rgba(38, 20, 16, 0.94);
+  border-radius: 16px;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  margin: 40px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.shadhin-https-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #f59e0b;
+}
+
+/* --- Private Browsing Window --- */
+.shadhin-private-window {
+  background: linear-gradient(135deg, #1c0828 0%, #0d0414 100%);
+}
+
+.shadhin-private-badge {
+  background: rgba(168, 85, 247, 0.25);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
