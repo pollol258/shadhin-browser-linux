@@ -499,6 +499,11 @@ impl DownloadsPopover {
         self.popover.is_visible()
     }
 
+    /// Checks if currently in open state
+    pub fn is_open(&self) -> bool {
+        *self.is_open.borrow()
+    }
+
     /// Returns the underlying GtkPopover
     pub fn popover(&self) -> &gtk4::Popover {
         &self.popover

@@ -129,7 +129,14 @@ fn test_application_menu_full_suite() {
     assert_eq!(window.toolbar().address_bar().text(), "about:history");
 
     gio::prelude::ActionGroupExt::activate_action(&win_widget, "downloads", None);
-    assert_eq!(window.toolbar().address_bar().text(), "about:downloads");
+    assert!(
+        window
+            .toolbar()
+            .downloads_popover()
+            .unwrap()
+            .is_open(),
+        "Downloads action must toggle the downloads popover"
+    );
 
     gio::prelude::ActionGroupExt::activate_action(&win_widget, "find-in-page", None);
     assert!(
