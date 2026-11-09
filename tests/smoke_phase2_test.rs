@@ -133,6 +133,21 @@ fn test_phase2_comprehensive_smoke() {
     config.save().expect("revert config");
     println!("  -> Theme and accent persistence verified");
 
+    // 8. Downloads Interrupted State & Bangla Search Engine Verification
+    println!("CHECK 8: Interrupted status and Bangla search engines");
+    assert_eq!(DownloadStatus::Interrupted.as_str(), "interrupted");
+    let mut config_search = BrowserConfig::load();
+    config_search.search_engine_url = "https://www.google.com.bd/search?q=%s".to_string();
+    config_search.save().expect("save bangla search engine");
+    let reloaded_search = BrowserConfig::load();
+    assert_eq!(
+        reloaded_search.search_engine_url,
+        "https://www.google.com.bd/search?q=%s"
+    );
+    config_search.search_engine_url = "https://www.google.com/search?q=%s".to_string();
+    config_search.save().expect("revert default search engine");
+    println!("  -> Interrupted download state and Bangla search engines verified");
+
     window.window().close();
     println!("\nALL PHASE 2 SMOKE CHECKS PASSED SUCCESSFULLY!");
 }

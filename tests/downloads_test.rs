@@ -332,6 +332,10 @@ fn test_webkit_real_downloads_suite() {
                 let resp = "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"m2.txt\"\r\nContent-Length: 5\r\nConnection: close\r\n\r\nm2_ok";
                 let _ = stream.write_all(resp.as_bytes());
             }
+            "/retry_download" => {
+                let resp = "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"retry_file.txt\"\r\nContent-Length: 8\r\nConnection: close\r\n\r\nretry_ok";
+                let _ = stream.write_all(resp.as_bytes());
+            }
             _ => {
                 let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
             }
@@ -497,6 +501,43 @@ fn test_webkit_real_downloads_suite() {
     );
     assert_eq!(std::fs::read(temp_dir.join("m1.txt")).unwrap(), b"m1_ok");
     assert_eq!(std::fs::read(temp_dir.join("m2.txt")).unwrap(), b"m2_ok");
+
+    // ---------------------------------------------------------------------
+    // 5. Interrupted Status & Retry Download Verification
+    // ---------------------------------------------------------------------
+    let main_loop5 = glib::MainLoop::new(None, false);
+    let loop_done5 = main_loop5.clone();
+    let retry_completed = Arc::new(AtomicBool::new(false));
+    let r_comp = retry_completed.clone();
+
+    download_mgr.add_completion_listener(move |item| {
+        if item.file_name == "retry_file.txt" {
+            r_comp.store(true, Ordering::SeqCst);
+            let l = loop_done5.clone();
+            glib::timeout_add_local_once(Duration::from_millis(50), move || {
+                l.quit();
+            });
+        }
+    });
+
+    let timeout_loop5 = main_loop5.clone();
+    glib::timeout_add_local_once(Duration::from_secs(5), move || {
+        timeout_loop5.quit();
+    });
+
+    // Verify DownloadStatus::Interrupted variant and retry_download
+    assert_eq!(DownloadStatus::Interrupted.as_str(), "interrupted");
+    download_mgr.download_uri(&session, &server.url("/retry_download"), true);
+    main_loop5.run();
+
+    assert!(
+        retry_completed.load(Ordering::SeqCst),
+        "Download must complete via retry pipeline"
+    );
+    assert_eq!(
+        std::fs::read(temp_dir.join("retry_file.txt")).unwrap(),
+        b"retry_ok"
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

@@ -98,10 +98,12 @@ impl SettingsWindow {
             .build();
 
         let engines_model = gtk4::StringList::new(&[
+            "Google",
+            "Google Bangladesh (Google.com.bd)",
+            "Pipilika (পিপীলিকা)",
             "DuckDuckGo",
             "Brave Search",
             "Startpage",
-            "Google",
             "Bing",
             "Wikipedia",
         ]);
@@ -111,16 +113,20 @@ impl SettingsWindow {
             .build();
 
         let current_engine = config.borrow().search_engine_url.clone();
-        let selected_idx = if current_engine.contains("brave.com") {
+        let selected_idx = if current_engine.contains("google.com.bd") {
             1
-        } else if current_engine.contains("startpage.com") {
+        } else if current_engine.contains("pipilika.com") {
             2
-        } else if current_engine.contains("google.com") {
+        } else if current_engine.contains("duckduckgo.com") {
             3
-        } else if current_engine.contains("bing.com") {
+        } else if current_engine.contains("brave.com") {
             4
-        } else if current_engine.contains("wikipedia.org") {
+        } else if current_engine.contains("startpage.com") {
             5
+        } else if current_engine.contains("bing.com") {
+            6
+        } else if current_engine.contains("wikipedia.org") {
+            7
         } else {
             0
         };
@@ -130,30 +136,44 @@ impl SettingsWindow {
         let storage_search = storage.clone();
         search_combo.connect_selected_notify(move |combo| {
             let (name, tmpl, kw) = match combo.selected() {
-                1 => ("Brave Search", "https://search.brave.com/search?q=%s", "b"),
+                1 => (
+                    "Google Bangladesh",
+                    "https://www.google.com.bd/search?q=%s",
+                    "gbd",
+                ),
                 2 => (
+                    "Pipilika",
+                    "https://www.pipilika.com/#search?q=%s",
+                    "p",
+                ),
+                3 => ("DuckDuckGo", "https://duckduckgo.com/?q=%s", "d"),
+                4 => ("Brave Search", "https://search.brave.com/search?q=%s", "b"),
+                5 => (
                     "Startpage",
                     "https://www.startpage.com/sp/search?query=%s",
                     "s",
                 ),
-                3 => ("Google", "https://www.google.com/search?q=%s", "g"),
-                4 => ("Bing", "https://www.bing.com/search?q=%s", "bing"),
-                5 => (
+                6 => ("Bing", "https://www.bing.com/search?q=%s", "bing"),
+                7 => (
                     "Wikipedia",
                     "https://en.wikipedia.org/wiki/Special:Search?search=%s",
                     "w",
                 ),
-                _ => ("DuckDuckGo", "https://duckduckgo.com/?q=%s", "d"),
+                _ => ("Google", "https://www.google.com/search?q=%s", "g"),
             };
 
             cfg_search.borrow_mut().search_engine_url = tmpl.to_string();
             let _ = cfg_search.borrow().save();
 
             let kw_str = kw.to_string();
+            let name_str = name.to_string();
+            let tmpl_str = tmpl.to_string();
             storage_search.dispatch(move |db| {
                 let repo = SearchEngineRepository::new(db.conn());
                 if let Ok(Some(item)) = repo.get_by_keyword(&kw_str) {
                     let _ = repo.set_default(item.id);
+                } else if let Ok(id) = repo.add(&name_str, &kw_str, &tmpl_str) {
+                    let _ = repo.set_default(id);
                 }
             });
 

@@ -21,7 +21,6 @@ use crate::storage::history::HistoryRepository;
 use crate::storage::workspaces::WorkspaceRepository;
 use crate::ui::bookmarks_bar::BookmarksBar;
 use crate::ui::bookmarks_panel::BookmarksPanel;
-use crate::ui::downloads_panel::DownloadsPanel;
 use crate::ui::findbar::FindBar;
 use crate::ui::history_panel::HistoryPanel;
 use crate::ui::newtab::ShadhinNewTab;
@@ -51,7 +50,6 @@ pub struct TabUiItem {
     pub newtab: ShadhinNewTab,
     pub bookmarks_panel: BookmarksPanel,
     pub history_panel: HistoryPanel,
-    pub downloads_panel: DownloadsPanel,
     pub storage: StorageService,
     pub error_box: gtk4::Box,
     pub error_label: gtk4::Label,
@@ -322,7 +320,12 @@ impl ShadhinWindow {
         let https_manager = Rc::new(RefCell::new(HttpsUpgradeManager::new()));
 
         toolbar.address_bar().set_storage(storage.clone());
-        toolbar.attach_downloads(storage.clone(), download_mgr.clone());
+        toolbar.attach_downloads(
+            storage.clone(),
+            download_mgr.clone(),
+            Some(active_network_session.clone()),
+            persistence_allowed,
+        );
         toolbar.update_address_pill_width(1280);
 
         let tb_resize = toolbar.clone();
@@ -938,14 +941,6 @@ impl NavigationContext {
         let history_panel = HistoryPanel::new(self.storage.clone());
         stack.add_named(history_panel.widget(), Some("history"));
 
-        let downloads_panel = DownloadsPanel::new(
-            self.storage.clone(),
-            self.download_mgr.clone(),
-            self.session.clone(),
-            self.persistence_allowed,
-        );
-        stack.add_named(downloads_panel.widget(), Some("downloads"));
-
         newtab.load_data(self.storage.clone());
 
         let ui_item = Rc::new(TabUiItem {
@@ -954,7 +949,6 @@ impl NavigationContext {
             newtab,
             bookmarks_panel,
             history_panel,
-            downloads_panel,
             storage: self.storage.clone(),
             error_box,
             error_label,
@@ -2040,24 +2034,7 @@ impl NavigationContext {
                     }
                     self.sync_tabs();
                 } else if page_id == "shadhin:downloads" || page_id == "about:downloads" {
-                    let tm = self.tab_manager.borrow();
-                    if let Some(tab_cell) = tm.get_tab(tab_idx) {
-                        let mut tab = tab_cell.borrow_mut();
-                        tab.url = "about:downloads".to_string();
-                        tab.title = "Downloads".to_string();
-                        tab.favicon = None;
-                        tab.is_loading = false;
-                        page.set_title("Downloads");
-                        self.toolbar.address_bar().set_text("about:downloads");
-                        self.toolbar
-                            .address_bar()
-                            .set_security_status("security-low-symbolic", "Internal application page");
-                    }
-                    drop(tm);
-                    if let Some(item) = ui_item {
-                        item.downloads_panel.refresh("");
-                        item.stack.set_visible_child_name("downloads");
-                    }
+                    self.toolbar.toggle_downloads_popover();
                     self.sync_tabs();
                 } else if page_id == "shadhin:newtab"
                     || page_id == "about:newtab"
@@ -2511,23 +2488,7 @@ impl ShadhinWindow {
                     }
                 }
                 "downloads" => {
-                    if let Some(page) = tv_sb.selected_page() {
-                        let idx = tv_sb.page_position(&page) as usize;
-                        let tm = tm_sb.borrow();
-                        if let Some(tab_cell) = tm.get_tab(idx) {
-                            let mut tab = tab_cell.borrow_mut();
-                            tab.url = "about:downloads".to_string();
-                            tab.title = "Downloads".to_string();
-                            tab.favicon = None;
-                        }
-                        page.set_title("Downloads");
-                        tb_sb.address_bar().set_text("about:downloads");
-                        let items = items_sb.borrow();
-                        if let Some(item) = items.get(idx) {
-                            item.downloads_panel.refresh("");
-                            item.stack.set_visible_child_name("downloads");
-                        }
-                    }
+                    tb_sb.toggle_downloads_popover();
                 }
                 "settings" => {
                     let win_c = win_clone_sb.clone();
@@ -3166,21 +3127,10 @@ impl ShadhinWindow {
         self.window.add_action(&act_history);
 
         // 5. Downloads (win.downloads)
-        let tv_action = self.tab_view.clone();
-        let items_action = self.tab_items.clone();
         let tb_action = self.toolbar.clone();
         let act_downloads = gio::SimpleAction::new("downloads", None);
         act_downloads.connect_activate(move |_, _| {
-            if let Some(page) = tv_action.selected_page() {
-                let idx = tv_action.page_position(&page) as usize;
-                let items = items_action.borrow();
-                if let Some(item) = items.get(idx) {
-                    item.downloads_panel.refresh("");
-                    item.stack.set_visible_child_name("downloads");
-                    tb_action.address_bar().set_text("about:downloads");
-                    tb_action.address_bar().set_security_state(true);
-                }
-            }
+            tb_action.toggle_downloads_popover();
         });
         self.window.add_action(&act_downloads);
 

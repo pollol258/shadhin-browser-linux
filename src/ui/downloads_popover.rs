@@ -62,6 +62,8 @@ pub struct DownloadsPopover {
     empty_box: gtk4::Box,
     storage: StorageService,
     download_mgr: DownloadManager,
+    session: Option<Rc<RefCell<webkit6::NetworkSession>>>,
+    persistence_allowed: bool,
     is_open: Rc<RefCell<bool>>,
 }
 
@@ -70,6 +72,8 @@ impl DownloadsPopover {
         anchor: &impl IsA<gtk4::Widget>,
         storage: StorageService,
         download_mgr: DownloadManager,
+        session: Option<Rc<RefCell<webkit6::NetworkSession>>>,
+        persistence_allowed: bool,
     ) -> Rc<Self> {
         let popover = gtk4::Popover::builder()
             .has_arrow(true)
@@ -163,6 +167,8 @@ impl DownloadsPopover {
             empty_box,
             storage,
             download_mgr,
+            session,
+            persistence_allowed,
             is_open,
         });
 
@@ -259,6 +265,8 @@ impl DownloadsPopover {
             empty_box: self.empty_box.clone(),
             storage: self.storage.clone(),
             download_mgr: self.download_mgr.clone(),
+            session: self.session.clone(),
+            persistence_allowed: self.persistence_allowed,
             is_open: self.is_open.clone(),
         })
     }
@@ -307,7 +315,7 @@ impl DownloadsPopover {
             }
             DownloadStatus::Completed => "Finished".to_string(),
             DownloadStatus::Cancelled => "Cancelled".to_string(),
-            DownloadStatus::Interrupted => "Interrupted".to_string(),
+            DownloadStatus::Interrupted => "Interrupted (Connection lost)".to_string(),
             DownloadStatus::Failed => {
                 let err = item.error.as_deref().unwrap_or("Network error");
                 format!("Failed — {err}")
@@ -401,7 +409,46 @@ impl DownloadsPopover {
                 });
                 actions.append(&remove_btn);
             }
-            DownloadStatus::Cancelled | DownloadStatus::Failed | DownloadStatus::Interrupted => {
+            DownloadStatus::Interrupted => {
+                let retry_btn = gtk4::Button::builder()
+                    .label("Retry")
+                    .css_classes(["flat", "suggested-action", "font-xs"])
+                    .build();
+                let id = item.id;
+                let mgr = self.download_mgr.clone();
+                let sess_opt = self.session.clone();
+                let perm = self.persistence_allowed;
+                let inst = self.clone_ref();
+                retry_btn.connect_clicked(move |_| {
+                    if let Some(ref s) = sess_opt {
+                        mgr.retry_download(id, &s.borrow(), perm);
+                    }
+                    inst.refresh();
+                });
+                actions.append(&retry_btn);
+
+                let remove_btn = gtk4::Button::builder()
+                    .label("Remove")
+                    .css_classes(["flat", "dim-label", "font-xs"])
+                    .build();
+                let id = item.id;
+                let st = self.storage.clone();
+                let inst_remove = self.clone_ref();
+                remove_btn.connect_clicked(move |_| {
+                    let inst_del = inst_remove.clone();
+                    st.query_async(
+                        move |db| {
+                            let repo = DownloadRepository::new(db.conn());
+                            let _ = repo.delete(id);
+                        },
+                        move |()| {
+                            inst_del.refresh();
+                        },
+                    );
+                });
+                actions.append(&remove_btn);
+            }
+            DownloadStatus::Cancelled | DownloadStatus::Failed => {
                 let remove_btn = gtk4::Button::builder()
                     .label("Remove")
                     .css_classes(["flat", "dim-label", "font-xs"])

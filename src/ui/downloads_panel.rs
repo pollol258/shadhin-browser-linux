@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::browser::downloads::{DownloadItem, DownloadManager, DownloadStatus};
 use crate::storage::StorageService;
 use crate::storage::downloads::{DownloadRecord, DownloadRepository};
@@ -64,6 +66,7 @@ struct DownloadRowWidgets {
     item_data: Rc<RefCell<DownloadItem>>,
 }
 
+#[deprecated(note = "DownloadsPopover is the single source of truth for downloads")]
 pub struct DownloadsPanel {
     container: gtk4::Box,
     storage: StorageService,

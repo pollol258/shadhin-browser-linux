@@ -218,8 +218,20 @@ impl ShadhinToolbar {
     }
 
     /// Attaches the downloads popover with live download manager and storage services
-    pub fn attach_downloads(&self, storage: StorageService, download_mgr: DownloadManager) {
-        let pop = DownloadsPopover::new(&self.download_btn, storage, download_mgr);
+    pub fn attach_downloads(
+        &self,
+        storage: StorageService,
+        download_mgr: DownloadManager,
+        session: Option<Rc<RefCell<webkit6::NetworkSession>>>,
+        persistence_allowed: bool,
+    ) {
+        let pop = DownloadsPopover::new(
+            &self.download_btn,
+            storage,
+            download_mgr,
+            session,
+            persistence_allowed,
+        );
         *self.downloads_popover.borrow_mut() = Some(pop);
     }
 
