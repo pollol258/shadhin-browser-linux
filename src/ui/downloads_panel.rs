@@ -61,7 +61,6 @@ struct DownloadRowWidgets {
     retry_btn: gtk4::Button,
     open_btn: gtk4::Button,
     folder_btn: gtk4::Button,
-    del_btn: gtk4::Button,
     item_data: Rc<RefCell<DownloadItem>>,
 }
 
@@ -527,7 +526,6 @@ impl DownloadsPanel {
             retry_btn,
             open_btn,
             folder_btn,
-            del_btn,
             item_data,
         };
 

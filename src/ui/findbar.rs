@@ -12,9 +12,6 @@ pub struct FindBar {
     container: gtk4::Box,
     entry: gtk4::Entry,
     count_label: gtk4::Label,
-    prev_btn: gtk4::Button,
-    next_btn: gtk4::Button,
-    close_btn: gtk4::Button,
     current_controller: Rc<RefCell<Option<webkit6::FindController>>>,
 }
 
@@ -135,9 +132,6 @@ impl FindBar {
             container,
             entry,
             count_label,
-            prev_btn,
-            next_btn,
-            close_btn,
             current_controller,
         }
     }

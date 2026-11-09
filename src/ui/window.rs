@@ -12,7 +12,7 @@ use crate::browser::permissions::{
 use crate::browser::session::SessionManager;
 use crate::browser::tabs::{TAB_DISCARD_THRESHOLD, TabId, TabManager};
 use crate::browser::webview::create_configured_webview_with_session;
-use crate::config::{BrowserConfig, SidebarState, compute_effective_sidebar_state};
+use crate::config::BrowserConfig;
 use crate::privacy::adblock::{ContentFilterManager, SiteExceptionRepository};
 use crate::privacy::cookies::{apply_cookie_policy, apply_itp};
 use crate::privacy::https_only::{HttpsMode, HttpsUpgradeManager, extract_host_from_uri};
@@ -97,10 +97,6 @@ pub struct ShadhinWindow {
     session_mgr: Rc<RefCell<SessionManager>>,
     download_mgr: DownloadManager,
     current_workspace: Rc<RefCell<String>>,
-    saved_sidebar_state: Rc<RefCell<SidebarState>>,
-    effective_sidebar_state: Rc<RefCell<SidebarState>>,
-    is_private: bool,
-    filter_manager: ContentFilterManager,
     https_manager: Rc<RefCell<HttpsUpgradeManager>>,
     active_network_session: Rc<RefCell<NetworkSession>>,
     nav_ctx: Rc<NavigationContext>,
@@ -421,20 +417,6 @@ impl ShadhinWindow {
         root_box.append(&sandbox_banner);
         root_box.append(&split_view);
 
-        let initial_pref = config.borrow().sidebar_state;
-        let initial_eff = compute_effective_sidebar_state(1280, initial_pref);
-
-        let saved_sidebar_state = Rc::new(RefCell::new(initial_pref));
-        let effective_sidebar_state = Rc::new(RefCell::new(initial_eff));
-
-        Self::apply_sidebar_state(
-            initial_eff,
-            &split_view,
-            &sidebar,
-            &toolbar,
-            &effective_sidebar_state,
-        );
-
         // Tab layout configuration: "top" vs "vertical"
         let initial_layout = config.borrow().tab_layout.clone();
         if initial_layout == "vertical" {
@@ -615,10 +597,6 @@ impl ShadhinWindow {
             session_mgr,
             download_mgr,
             current_workspace,
-            saved_sidebar_state,
-            effective_sidebar_state,
-            is_private,
-            filter_manager,
             https_manager,
             active_network_session,
             nav_ctx,
@@ -652,11 +630,6 @@ impl ShadhinWindow {
         }
 
         win
-    }
-
-    /// Synchronizes the visual tab strip, sidebar open tabs list, and toolbar state
-    fn sync_tabs(&self) {
-        self.nav_ctx.sync_tabs();
     }
 
     /// Creates and configures a new tab page with lazy WebView allocation
@@ -2204,91 +2177,6 @@ impl NavigationContext {
 }
 
 impl ShadhinWindow {
-    /// Applies an effective sidebar state to the split view, sidebar, and toolbar
-    fn apply_sidebar_state(
-        state: SidebarState,
-        split_view: &adw::OverlaySplitView,
-        sidebar: &Rc<ShadhinSidebar>,
-        toolbar: &Rc<ShadhinToolbar>,
-        effective_cell: &Rc<RefCell<SidebarState>>,
-    ) {
-        *effective_cell.borrow_mut() = state;
-        match state {
-            SidebarState::Hidden => {
-                split_view.set_show_sidebar(false);
-                toolbar.update_sidebar_active(false);
-            }
-            SidebarState::Compact => {
-                split_view.set_show_sidebar(true);
-                split_view.set_min_sidebar_width(56.0);
-                split_view.set_max_sidebar_width(56.0);
-                split_view.set_sidebar_width_fraction(0.04);
-                sidebar.set_compact_mode(true);
-                toolbar.update_sidebar_active(true);
-            }
-            SidebarState::Expanded => {
-                split_view.set_show_sidebar(true);
-                split_view.set_min_sidebar_width(200.0);
-                split_view.set_max_sidebar_width(280.0);
-                split_view.set_sidebar_width_fraction(0.18);
-                sidebar.set_compact_mode(false);
-                toolbar.update_sidebar_active(true);
-            }
-        }
-    }
-
-    /// Toggles the sidebar between visible (Expanded or Compact) and Hidden, updating user preference
-    #[allow(clippy::too_many_arguments)]
-    fn toggle_sidebar_action(
-        win_width: i32,
-        saved_cell: &Rc<RefCell<SidebarState>>,
-        cfg_cell: &Rc<RefCell<BrowserConfig>>,
-        split_view: &adw::OverlaySplitView,
-        sidebar: &Rc<ShadhinSidebar>,
-        toolbar: &Rc<ShadhinToolbar>,
-        effective_cell: &Rc<RefCell<SidebarState>>,
-    ) {
-        let cur_eff = *effective_cell.borrow();
-        let cur_saved = *saved_cell.borrow();
-        let new_pref = match cur_eff {
-            SidebarState::Hidden => {
-                if cur_saved != SidebarState::Hidden {
-                    cur_saved
-                } else {
-                    SidebarState::Expanded
-                }
-            }
-            SidebarState::Expanded | SidebarState::Compact => SidebarState::Hidden,
-        };
-
-        *saved_cell.borrow_mut() = new_pref;
-        cfg_cell.borrow_mut().sidebar_state = new_pref;
-        let _ = cfg_cell.borrow().save();
-
-        let effective = compute_effective_sidebar_state(win_width, new_pref);
-        Self::apply_sidebar_state(effective, split_view, sidebar, toolbar, effective_cell);
-    }
-
-    /// Sets an explicit sidebar state chosen by the user
-    #[allow(clippy::too_many_arguments)]
-    fn set_explicit_sidebar_state(
-        new_state: SidebarState,
-        win_width: i32,
-        saved_cell: &Rc<RefCell<SidebarState>>,
-        cfg_cell: &Rc<RefCell<BrowserConfig>>,
-        split_view: &adw::OverlaySplitView,
-        sidebar: &Rc<ShadhinSidebar>,
-        toolbar: &Rc<ShadhinToolbar>,
-        effective_cell: &Rc<RefCell<SidebarState>>,
-    ) {
-        *saved_cell.borrow_mut() = new_state;
-        cfg_cell.borrow_mut().sidebar_state = new_state;
-        let _ = cfg_cell.borrow().save();
-
-        let effective = compute_effective_sidebar_state(win_width, new_state);
-        Self::apply_sidebar_state(effective, split_view, sidebar, toolbar, effective_cell);
-    }
-
     /// Sets up cross-component UI signals
     fn setup_signals(&self) {
         // 1. Sidebar Toggle Button in Toolbar
@@ -2865,7 +2753,6 @@ impl ShadhinWindow {
     fn setup_shortcuts(&self) {
         let key_controller = gtk4::EventControllerKey::new();
 
-        let split_key = self.split_view.clone();
         let tb_key = self.toolbar.clone();
         let tv_key = self.tab_view.clone();
         let ts_key = self.tab_strip.clone();
@@ -2876,10 +2763,7 @@ impl ShadhinWindow {
         let win_self_clone = self.clone();
         let cfg_key = self.config.clone();
         let storage_key = self.storage.clone();
-        let sb_key = self.sidebar.clone();
         let bb_key = self.bookmarks_bar.clone();
-        let saved_key = self.saved_sidebar_state.clone();
-        let eff_key = self.effective_sidebar_state.clone();
         let nav_key = self.nav_ctx.clone();
         let session_key = self.nav_ctx.session.clone();
         let perm_key = self.persistence_allowed;
@@ -3098,17 +2982,11 @@ impl ShadhinWindow {
                 return glib::Propagation::Stop;
             }
 
-            // F9 or Ctrl+B: Toggle Sidebar
+            // F9 or Ctrl+B: Toggle Sidebar / Tab Layout
             if key == Key::F9 || (ctrl && !shift && key == Key::b) {
-                Self::toggle_sidebar_action(
-                    win_self.width(),
-                    &saved_key,
-                    &cfg_key,
-                    &split_key,
-                    &sb_key,
-                    &tb_key,
-                    &eff_key,
-                );
+                let current_is_vert = win_self_clone.config.borrow().tab_layout == "vertical";
+                let next_layout = if current_is_vert { "top" } else { "vertical" };
+                win_self_clone.set_tab_layout(next_layout);
                 return glib::Propagation::Stop;
             }
 

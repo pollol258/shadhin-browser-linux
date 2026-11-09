@@ -14,7 +14,6 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub struct ShadhinNewTab {
     scrolled_window: gtk4::ScrolledWindow,
-    container: gtk4::Box,
     shortcuts_box: gtk4::Box,
     recent_box: gtk4::Box,
     on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
@@ -194,7 +193,6 @@ impl ShadhinNewTab {
 
         Self {
             scrolled_window,
-            container,
             shortcuts_box,
             recent_box,
             on_navigate,

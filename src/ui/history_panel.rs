@@ -11,7 +11,6 @@ pub struct HistoryPanel {
     storage: StorageService,
     on_open_url: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
     list_container: gtk4::Box,
-    search_entry: gtk4::SearchEntry,
 }
 
 impl HistoryPanel {
@@ -79,7 +78,6 @@ impl HistoryPanel {
             storage,
             on_open_url,
             list_container,
-            search_entry,
         };
 
         panel.wire_clear_button(&clear_btn);

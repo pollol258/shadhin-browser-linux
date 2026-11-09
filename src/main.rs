@@ -3,7 +3,6 @@
 //!
 //! Main entry point for the Linux desktop web browser.
 
-#![allow(dead_code)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::suspicious_open_options)]
 

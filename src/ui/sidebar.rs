@@ -12,7 +12,6 @@ use std::rc::Rc;
 
 pub struct ShadhinSidebar {
     scrolled_window: gtk4::ScrolledWindow,
-    container: gtk4::Box,
     tabs_list_box: gtk4::ListBox,
     footer_label: gtk4::Label,
     on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>>,
@@ -23,7 +22,6 @@ pub struct ShadhinSidebar {
     on_tab_sleep: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>>,
-    is_compact: Rc<RefCell<bool>>,
 }
 
 impl ShadhinSidebar {
@@ -36,7 +34,6 @@ impl ShadhinSidebar {
             .build();
         container.set_size_request(235, -1);
 
-        let is_compact = Rc::new(RefCell::new(false));
         let on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let on_tab_selected: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_tab_close: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
@@ -122,7 +119,6 @@ impl ShadhinSidebar {
 
         Self {
             scrolled_window,
-            container,
             tabs_list_box,
             footer_label,
             on_new_tab,
@@ -133,7 +129,6 @@ impl ShadhinSidebar {
             on_tab_sleep,
             on_workspace_selected,
             on_create_workspace,
-            is_compact,
         }
     }
 
@@ -170,25 +165,6 @@ impl ShadhinSidebar {
     /// Connects tab sleep action
     pub fn connect_tab_sleep<F: Fn(i32) + 'static>(&self, callback: F) {
         *self.on_tab_sleep.borrow_mut() = Some(Box::new(callback));
-    }
-
-    /// Sets or clears compact mode (narrow ~56px icon-only rail vs full 235px)
-    pub fn set_compact_mode(&self, compact: bool) {
-        *self.is_compact.borrow_mut() = compact;
-        if compact {
-            self.container.add_css_class("compact");
-            self.scrolled_window.set_size_request(56, -1);
-            self.container.set_size_request(56, -1);
-        } else {
-            self.container.remove_css_class("compact");
-            self.scrolled_window.set_size_request(235, -1);
-            self.container.set_size_request(235, -1);
-        }
-    }
-
-    /// Returns whether the sidebar is currently in compact mode
-    pub fn is_compact_mode(&self) -> bool {
-        *self.is_compact.borrow()
     }
 
     /// Re-renders the vertical tabs list from the current TabDisplayInfo slice

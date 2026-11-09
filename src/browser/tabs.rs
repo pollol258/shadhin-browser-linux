@@ -4,8 +4,6 @@
 //! navigation states, tab ordering, in-memory closed tab history (bounded to 10),
 //! and low-RAM tab discarding.
 
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;

@@ -3,7 +3,6 @@
 //! Provides the Libadwaita window chrome, glassmorphic styling, tabs,
 //! address bar, sidebar navigation, New Tab dashboard, and privacy popover.
 
-#![allow(dead_code)]
 #![allow(clippy::type_complexity)]
 
 pub mod addressbar;
@@ -20,7 +19,6 @@ pub mod settings;
 pub mod sidebar;
 pub mod tabbar;
 pub mod theme;
-pub mod titlebar;
 pub mod toolbar;
 pub mod window;
 

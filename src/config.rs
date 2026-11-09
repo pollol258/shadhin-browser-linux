@@ -2,8 +2,6 @@
 //!
 //! Stores user preferences in `~/.config/shadhin-browser/config.toml`.
 
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

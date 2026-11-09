@@ -9,7 +9,6 @@
 //! - `ui`: Libadwaita window, toolbar, tabbar, sidebar, and panels
 //! - `utils`: Debounce timing, logging, and helpers
 
-#![allow(dead_code)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::suspicious_open_options)]
 

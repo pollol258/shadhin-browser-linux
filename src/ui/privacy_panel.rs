@@ -11,12 +11,10 @@ use tracing::info;
 
 pub struct PrivacyPopover {
     popover: gtk4::Popover,
-    config: Rc<RefCell<BrowserConfig>>,
     current_domain: Rc<RefCell<Option<String>>>,
     domain_label: gtk4::Label,
     site_switch: gtk4::Switch,
     site_status_label: gtk4::Label,
-    master_switch: gtk4::Switch,
     on_private_window: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_clear_data: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_open_settings: Rc<RefCell<Option<Box<dyn Fn()>>>>,
@@ -286,12 +284,10 @@ impl PrivacyPopover {
 
         Self {
             popover,
-            config,
             current_domain,
             domain_label,
             site_switch,
             site_status_label,
-            master_switch,
             on_private_window,
             on_clear_data,
             on_open_settings,

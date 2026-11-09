@@ -15,9 +15,7 @@ use std::path::Path;
 use std::rc::Rc;
 use tracing::info;
 
-pub struct SettingsWindow {
-    dialog: adw::PreferencesDialog,
-}
+pub struct SettingsWindow;
 
 impl SettingsWindow {
     /// Constructs and presents the Preferences Window
