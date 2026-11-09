@@ -314,6 +314,16 @@ impl AddressBar {
         &self.reader_btn
     }
 
+    /// Closes the suggestions popover if open
+    pub fn close_suggestions(&self) {
+        self.suggestions_popover.popdown();
+    }
+
+    /// Accessor to the suggestions popover
+    pub fn suggestions_popover(&self) -> &gtk4::Popover {
+        &self.suggestions_popover
+    }
+
     fn setup_key_and_focus_controller(&self) {
         let entry = self.entry.clone();
         let popover = self.suggestions_popover.clone();

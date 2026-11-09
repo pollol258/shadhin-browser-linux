@@ -205,7 +205,7 @@ fn test_idle_cpu_5_sample_benchmark() {
     println!("======================================================================\n");
 
     // Warmup pause to avoid sampling test runner thread initialization spike
-    thread::sleep(Duration::from_millis(150));
+    thread::sleep(Duration::from_millis(300));
 
     fn get_cpu_ticks() -> (u64, u64) {
         if let Ok(stat) = std::fs::read_to_string("/proc/self/stat") {

@@ -1,8 +1,12 @@
 //! Navigation toolbar / header bar containing navigation, address pill, downloads, and app menu
 //!
 //! Styled according to HANDOFF.md (56 px tall, icon buttons 36x36 px, icon 17 px, radius 8 px).
+//! Layout: [sidebar toggle] [back] [forward] ..... [reload/stop][address pill] ..... [download] [menu]
 
+use crate::browser::downloads::DownloadManager;
+use crate::storage::StorageService;
 use crate::ui::addressbar::AddressBar;
+use crate::ui::downloads_popover::DownloadsPopover;
 use crate::ui::privacy_panel::PrivacyPopover;
 use adw::prelude::*;
 use gtk4::glib;
@@ -20,7 +24,7 @@ pub struct ShadhinToolbar {
     privacy_popover: Rc<PrivacyPopover>,
     download_btn: gtk4::Button,
     downloads_badge: gtk4::Label,
-    new_tab_btn: gtk4::Button,
+    downloads_popover: Rc<RefCell<Option<Rc<DownloadsPopover>>>>,
     menu_btn: gtk4::MenuButton,
     is_loading: Rc<RefCell<bool>>,
 }
@@ -34,7 +38,7 @@ impl ShadhinToolbar {
             .build();
         container.set_size_request(-1, 56);
 
-        // --- 1. Left Cluster: Sidebar Toggle, Back, Forward, Reload/Stop ---
+        // --- 1. Left Cluster: Sidebar Toggle, Back, Forward ---
         let left_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
@@ -76,6 +80,9 @@ impl ShadhinToolbar {
         forward_btn.set_size_request(36, 36);
         left_box.append(&forward_btn);
 
+        container.pack_start(&left_box);
+
+        // --- 2. Center: [reload/stop][address pill] in .address-group ---
         let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
         reload_icon.set_pixel_size(17);
         let reload_btn = gtk4::Button::builder()
@@ -85,26 +92,27 @@ impl ShadhinToolbar {
             .valign(gtk4::Align::Center)
             .build();
         reload_btn.set_size_request(36, 36);
-        left_box.append(&reload_btn);
 
-        container.pack_start(&left_box);
-
-        // --- 2. Center: Centered Pill Address Bar (min(680px, 58vw)) ---
         let address_bar = Rc::new(AddressBar::new());
         let addr_widget = address_bar.widget();
-        addr_widget.set_hexpand(true);
-        addr_widget.set_halign(gtk4::Align::Center);
         addr_widget.set_size_request(460, 39);
-        container.set_title_widget(Some(addr_widget));
+
+        let center_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(4)
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Center)
+            .hexpand(true)
+            .css_classes(["address-group"])
+            .build();
+        center_box.append(&reload_btn);
+        center_box.append(addr_widget);
+        container.set_title_widget(Some(&center_box));
 
         // Anchor Privacy Popover to the Lock button inside the Address Bar
         let privacy_popover = Rc::new(PrivacyPopover::new(address_bar.lock_button()));
-        let pop_clone = privacy_popover.clone();
-        address_bar.lock_button().connect_clicked(move |_| {
-            pop_clone.toggle();
-        });
 
-        // --- 3. Right Cluster: Downloads, New Tab, Menu ---
+        // --- 3. Right Cluster: Downloads, Menu (No "+" in header bar!) ---
         let right_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
@@ -134,18 +142,6 @@ impl ShadhinToolbar {
         dl_overlay.add_overlay(&downloads_badge);
         right_box.append(&dl_overlay);
 
-        // New Tab button (+)
-        let new_tab_icon = gtk4::Image::from_icon_name("list-add-symbolic");
-        new_tab_icon.set_pixel_size(17);
-        let new_tab_btn = gtk4::Button::builder()
-            .child(&new_tab_icon)
-            .tooltip_text("New tab (Ctrl+T)")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
-            .valign(gtk4::Align::Center)
-            .build();
-        new_tab_btn.set_size_request(36, 36);
-        right_box.append(&new_tab_btn);
-
         // Main Menu button
         let menu_btn = gtk4::MenuButton::builder()
             .icon_name("open-menu-symbolic")
@@ -158,6 +154,49 @@ impl ShadhinToolbar {
         right_box.append(&menu_btn);
 
         container.pack_end(&right_box);
+
+        let downloads_popover: Rc<RefCell<Option<Rc<DownloadsPopover>>>> =
+            Rc::new(RefCell::new(None));
+
+        // Wire popover mutual exclusivity
+        let dl_pop_priv = downloads_popover.clone();
+        let menu_priv = menu_btn.clone();
+        let addr_priv = address_bar.clone();
+        let priv_clone = privacy_popover.clone();
+        address_bar.lock_button().connect_clicked(move |_| {
+            menu_priv.popdown();
+            addr_priv.close_suggestions();
+            if let Some(ref dl) = *dl_pop_priv.borrow() {
+                dl.popdown();
+            }
+            priv_clone.toggle();
+        });
+
+        let dl_pop_click = downloads_popover.clone();
+        let priv_dl = privacy_popover.clone();
+        let menu_dl = menu_btn.clone();
+        let addr_dl = address_bar.clone();
+        download_btn.connect_clicked(move |_| {
+            priv_dl.popover().popdown();
+            menu_dl.popdown();
+            addr_dl.close_suggestions();
+            if let Some(ref dl) = *dl_pop_click.borrow() {
+                dl.toggle();
+            }
+        });
+
+        let dl_pop_menu = downloads_popover.clone();
+        let priv_menu = privacy_popover.clone();
+        let addr_menu = address_bar.clone();
+        menu_btn.connect_active_notify(move |mb| {
+            if mb.is_active() {
+                priv_menu.popover().popdown();
+                addr_menu.close_suggestions();
+                if let Some(ref dl) = *dl_pop_menu.borrow() {
+                    dl.popdown();
+                }
+            }
+        });
 
         let is_loading = Rc::new(RefCell::new(false));
 
@@ -172,10 +211,42 @@ impl ShadhinToolbar {
             privacy_popover,
             download_btn,
             downloads_badge,
-            new_tab_btn,
+            downloads_popover,
             menu_btn,
             is_loading,
         }
+    }
+
+    /// Attaches the downloads popover with live download manager and storage services
+    pub fn attach_downloads(&self, storage: StorageService, download_mgr: DownloadManager) {
+        let pop = DownloadsPopover::new(&self.download_btn, storage, download_mgr);
+        *self.downloads_popover.borrow_mut() = Some(pop);
+    }
+
+    /// Toggles the downloads popover
+    pub fn toggle_downloads_popover(&self) {
+        self.privacy_popover.popover().popdown();
+        self.menu_btn.popdown();
+        self.address_bar.close_suggestions();
+        if let Some(ref dl) = *self.downloads_popover.borrow() {
+            dl.toggle();
+        }
+    }
+
+    /// Dynamically recalculates and sets address pill width: min(680px, 58vw)
+    pub fn update_address_pill_width(&self, window_width: i32) {
+        let target = ((window_width as f64 * 0.58).round() as i32).clamp(360, 680);
+        self.address_bar.widget().set_size_request(target, 39);
+    }
+
+    /// Closes all open popovers (main menu, downloads, privacy, address suggestions)
+    pub fn close_all_popovers(&self) {
+        self.privacy_popover.popover().popdown();
+        if let Some(ref dl) = *self.downloads_popover.borrow() {
+            dl.popdown();
+        }
+        self.menu_btn.popdown();
+        self.address_bar.close_suggestions();
     }
 
     /// Updates back button sensitivity
@@ -232,10 +303,8 @@ impl ShadhinToolbar {
         self.download_btn.connect_clicked(move |_| callback());
     }
 
-    /// Connects the new tab button clicked signal
-    pub fn connect_new_tab<F: Fn() + 'static>(&self, callback: F) {
-        self.new_tab_btn.connect_clicked(move |_| callback());
-    }
+    /// Connects the new tab button clicked signal (no-op since header bar has no '+' button)
+    pub fn connect_new_tab<F: Fn() + 'static>(&self, _callback: F) {}
 
     /// Updates the download count badge
     pub fn set_download_count(&self, count: usize) {
@@ -255,6 +324,11 @@ impl ShadhinToolbar {
     /// Accessor to the privacy shield popover
     pub fn privacy_popover(&self) -> &PrivacyPopover {
         &self.privacy_popover
+    }
+
+    /// Accessor to the downloads popover
+    pub fn downloads_popover(&self) -> Option<Rc<DownloadsPopover>> {
+        self.downloads_popover.borrow().clone()
     }
 
     /// Updates the sidebar toggle button active state
@@ -283,11 +357,6 @@ impl ShadhinToolbar {
     /// Accessor to the download button
     pub fn download_button(&self) -> &gtk4::Button {
         &self.download_btn
-    }
-
-    /// Accessor to the new tab button
-    pub fn new_tab_button(&self) -> &gtk4::Button {
-        &self.new_tab_btn
     }
 
     /// Accessor to the main menu button

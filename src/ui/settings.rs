@@ -21,11 +21,12 @@ pub struct SettingsWindow {
 
 impl SettingsWindow {
     /// Constructs and presents the Preferences Window
-    pub fn present(
+    pub fn present<F: Fn(&str) + 'static>(
         parent: Option<&impl IsA<gtk4::Widget>>,
         config: Rc<RefCell<BrowserConfig>>,
         storage: StorageService,
         session: Option<webkit6::NetworkSession>,
+        on_tab_layout_changed: Option<F>,
     ) {
         let win = adw::PreferencesDialog::builder()
             .title("Preferences")
@@ -310,7 +311,7 @@ impl SettingsWindow {
             .build();
 
         let theme_group = adw::PreferencesGroup::builder()
-            .title("Theme & Wallpapers")
+            .title("Theme &amp; Wallpapers")
             .description("Customize window appearance and background graphics")
             .build();
 
@@ -387,6 +388,9 @@ impl SettingsWindow {
             let layout_val = if sel == 1 { "vertical" } else { "top" };
             cfg_layout.borrow_mut().tab_layout = layout_val.to_string();
             let _ = cfg_layout.borrow().save();
+            if let Some(ref cb) = on_tab_layout_changed {
+                cb(layout_val);
+            }
         });
         theme_group.add(&tab_layout_row);
 
@@ -501,8 +505,8 @@ impl SettingsWindow {
 
         // Group 1: Shield & Content Filtering
         let shield_group = adw::PreferencesGroup::builder()
-            .title("Content Filtering & Shield")
-            .description("Native WebKit content filter rules (EasyList & EasyPrivacy)")
+            .title("Content Filtering &amp; Shield")
+            .description("Native WebKit content filter rules (EasyList &amp; EasyPrivacy)")
             .build();
 
         let master_switch = adw::SwitchRow::builder()
@@ -556,7 +560,7 @@ impl SettingsWindow {
 
         // Group 2: Connection & Execution Controls
         let conn_group = adw::PreferencesGroup::builder()
-            .title("Connection & Execution")
+            .title("Connection &amp; Execution")
             .build();
 
         let https_switch = adw::SwitchRow::builder()
@@ -586,7 +590,7 @@ impl SettingsWindow {
 
         // Group 3: Cookies & Browsing Data
         let data_group = adw::PreferencesGroup::builder()
-            .title("Cookies & Browsing Data")
+            .title("Cookies &amp; Browsing Data")
             .build();
 
         let cookie_switch = adw::SwitchRow::builder()
@@ -831,7 +835,7 @@ impl SettingsWindow {
 
         let toolkit_row = adw::ActionRow::builder()
             .title("User Interface")
-            .subtitle("GTK4 & Libadwaita 1.6+")
+            .subtitle("GTK4 &amp; Libadwaita 1.6+")
             .build();
         about_group.add(&toolkit_row);
         about_page.add(&about_group);

@@ -11,6 +11,7 @@ pub mod bookmarks_bar;
 pub mod bookmarks_panel;
 pub mod clear_data;
 pub mod downloads_panel;
+pub mod downloads_popover;
 pub mod findbar;
 pub mod history_panel;
 pub mod newtab;

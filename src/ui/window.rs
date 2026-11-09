@@ -326,6 +326,20 @@ impl ShadhinWindow {
         let https_manager = Rc::new(RefCell::new(HttpsUpgradeManager::new()));
 
         toolbar.address_bar().set_storage(storage.clone());
+        toolbar.attach_downloads(storage.clone(), download_mgr.clone());
+        toolbar.update_address_pill_width(1280);
+
+        let tb_resize = toolbar.clone();
+        window.connect_default_width_notify(move |win| {
+            tb_resize.update_address_pill_width(win.width());
+        });
+
+        let tb_blur = toolbar.clone();
+        window.connect_is_active_notify(move |win| {
+            if !win.is_active() {
+                tb_blur.close_all_popovers();
+            }
+        });
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
         let current_workspace = Rc::new(RefCell::new("default".to_string()));
 
@@ -520,12 +534,6 @@ impl ShadhinWindow {
         let nav_nt_tb = nav_ctx.clone();
         tab_bar_new_btn.connect_clicked(move |_| {
             nav_nt_tb.create_tab(None, None);
-        });
-
-        // Wire toolbar '+' new tab button
-        let nav_nt_bar = nav_ctx.clone();
-        toolbar.connect_new_tab(move || {
-            nav_nt_bar.create_tab(None, None);
         });
 
         // Wire sidebar new tab button
@@ -2284,24 +2292,11 @@ impl ShadhinWindow {
     /// Sets up cross-component UI signals
     fn setup_signals(&self) {
         // 1. Sidebar Toggle Button in Toolbar
-        let win_w = self.window.clone();
-        let saved_cell = self.saved_sidebar_state.clone();
-        let cfg_cell = self.config.clone();
-        let sv = self.split_view.clone();
-        let sb = self.sidebar.clone();
-        let tb = self.toolbar.clone();
-        let eff = self.effective_sidebar_state.clone();
-
+        let win_toggle = self.clone();
         self.toolbar.connect_sidebar_toggle(move || {
-            Self::toggle_sidebar_action(
-                win_w.width(),
-                &saved_cell,
-                &cfg_cell,
-                &sv,
-                &sb,
-                &tb,
-                &eff,
-            );
+            let current_is_vert = win_toggle.config.borrow().tab_layout == "vertical";
+            let next_layout = if current_is_vert { "top" } else { "vertical" };
+            win_toggle.set_tab_layout(next_layout);
         });
 
         // Bookmarks Bar item click navigation
@@ -2477,7 +2472,7 @@ impl ShadhinWindow {
 
             tv.close_page_finish(page, true);
             Self::sync_tabs_external(&tm_close, &ts_close, &sb_close, &tv_close, &tb_close);
-            glib::Propagation::Proceed
+            glib::Propagation::Stop
         });
 
         // 7. Address Bar Submission
@@ -2566,6 +2561,7 @@ impl ShadhinWindow {
         let cfg_sb = self.config.clone();
         let storage_sb = self.storage.clone();
         let session_sb = self.nav_ctx.session.clone();
+        let win_clone_sb = self.clone();
 
         self.sidebar.connect_page_selected(move |page_id| {
             info!("Sidebar item chosen: {page_id}");
@@ -2646,11 +2642,15 @@ impl ShadhinWindow {
                     }
                 }
                 "settings" => {
+                    let win_c = win_clone_sb.clone();
                     SettingsWindow::present(
                         Some(&win_sb),
                         cfg_sb.clone(),
                         storage_sb.clone(),
                         Some(session_sb.borrow().clone()),
+                        Some(move |layout: &str| {
+                            win_c.set_tab_layout(layout);
+                        }),
                     );
                 }
                 _ => {}
@@ -2809,14 +2809,19 @@ impl ShadhinWindow {
         let cfg_st = self.config.clone();
         let storage_st = self.storage.clone();
         let session_st = self.nav_ctx.session.clone();
+        let win_clone_st = self.clone();
         self.toolbar
             .privacy_popover()
             .set_on_open_settings(move || {
+                let win_c = win_clone_st.clone();
                 SettingsWindow::present(
                     Some(&win_st),
                     cfg_st.clone(),
                     storage_st.clone(),
                     Some(session_st.borrow().clone()),
+                    Some(move |layout: &str| {
+                        win_c.set_tab_layout(layout);
+                    }),
                 );
             });
 
@@ -2868,6 +2873,7 @@ impl ShadhinWindow {
         let items_key = self.tab_items.clone();
         let fb_key = self.find_bar.clone();
         let win_self = self.window.clone();
+        let win_self_clone = self.clone();
         let cfg_key = self.config.clone();
         let storage_key = self.storage.clone();
         let sb_key = self.sidebar.clone();
@@ -3108,11 +3114,15 @@ impl ShadhinWindow {
 
             // Ctrl+,: Preferences / Settings Window
             if ctrl && key == Key::comma {
+                let win_c = win_self_clone.clone();
                 SettingsWindow::present(
                     Some(&win_self),
                     cfg_key.clone(),
                     storage_key.clone(),
                     Some(session_key.borrow().clone()),
+                    Some(move |layout: &str| {
+                        win_c.set_tab_layout(layout);
+                    }),
                 );
                 return glib::Propagation::Stop;
             }
@@ -3184,18 +3194,9 @@ impl ShadhinWindow {
                 return glib::Propagation::Stop;
             }
 
-            // Ctrl+J: Open Downloads panel
+            // Ctrl+J: Toggle Downloads popover
             if ctrl && !shift && key == Key::j {
-                if let Some(page) = tv_key.selected_page() {
-                    let idx = tv_key.page_position(&page) as usize;
-                    let items = items_key.borrow();
-                    if let Some(item) = items.get(idx) {
-                        item.downloads_panel.refresh("");
-                        item.stack.set_visible_child_name("downloads");
-                        tb_key.address_bar().set_text("about:downloads");
-                        tb_key.address_bar().set_security_state(true);
-                    }
-                }
+                tb_key.toggle_downloads_popover();
                 return glib::Propagation::Stop;
             }
 
@@ -3387,13 +3388,18 @@ impl ShadhinWindow {
         let cfg_action = self.config.clone();
         let storage_action = self.storage.clone();
         let session_action = self.active_network_session.clone();
+        let win_clone_act = self.clone();
         let act_settings = gio::SimpleAction::new("settings", None);
         act_settings.connect_activate(move |_, _| {
+            let win_c = win_clone_act.clone();
             SettingsWindow::present(
                 Some(&win_action),
                 cfg_action.clone(),
                 storage_action.clone(),
                 Some(session_action.borrow().clone()),
+                Some(move |layout: &str| {
+                    win_c.set_tab_layout(layout);
+                }),
             );
         });
         self.window.add_action(&act_settings);
@@ -3510,19 +3516,21 @@ impl ShadhinWindow {
 
     /// Applies tab layout: "top" (top tab strip) vs "vertical" (collapsible sidebar)
     pub fn set_tab_layout(&self, layout: &str) {
-        if layout == "vertical" {
-            self.tab_bar.set_visible(false);
-            self.split_view.set_show_sidebar(true);
-            self.toolbar.update_sidebar_active(true);
-        } else {
-            self.tab_bar.set_visible(true);
-            self.split_view.set_show_sidebar(false);
-            self.toolbar.update_sidebar_active(false);
-        }
+        let is_vert = layout == "vertical";
+        self.tab_bar.set_visible(!is_vert);
+        self.split_view.set_show_sidebar(is_vert);
+        self.toolbar.update_sidebar_active(is_vert);
+        self.config.borrow_mut().tab_layout = layout.to_string();
+        let _ = self.config.borrow().save();
     }
 
     /// Accessor to the find bar
     pub fn find_bar(&self) -> &FindBar {
         &self.find_bar
+    }
+
+    /// Accessor to the underlying AdwTabView
+    pub fn tab_view(&self) -> &adw::TabView {
+        &self.tab_view
     }
 }

@@ -187,10 +187,10 @@ progressbar.shadhin-load-line progress {
   border-radius: 0;
 }
 
-/* --- Top Tab Strip (tabs 38px tall, radius 8px) --- */
+/* --- Top Tab Strip (tabs 38px tall, radius 8px, min 120px, max 235px) --- */
 .top-tab-strip,
 tabbar.shadhin-top-tab-bar {
-  min-height: 40px;
+  min-height: 42px;
   background-color: @headerbar_bg;
   border-bottom: 1px solid @border_color;
   padding: 2px 8px;
@@ -199,11 +199,17 @@ tabbar.shadhin-top-tab-bar {
 .top-tab-strip tab,
 tabbar tab {
   min-height: 38px;
+  min-width: 120px;
   padding: 0 9px;
   border-radius: 8px;
   color: @muted_text;
   margin: 0 2px;
   transition: background-color 180ms ease, color 180ms ease;
+}
+
+tabbar tab.pinned {
+  min-width: 38px;
+  padding: 0 4px;
 }
 
 .top-tab-strip tab:checked,
