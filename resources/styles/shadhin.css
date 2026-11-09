@@ -21,10 +21,19 @@
 @define-color hover_bg #e7e7e7;
 
 /* --- Typography & Global Application Window --- */
+window.shadhin-window,
+.shadhin-address-entry,
+.shadhin-tab-title,
+.vertical-tab-item,
+.vertical-tab-item label,
+entry,
+label {
+  font-family: Cantarell, "Noto Sans Bengali", sans-serif;
+}
+
 window.shadhin-window {
   background-color: @window_bg;
   color: @text_color;
-  font-family: Cantarell, "Noto Sans Bengali", sans-serif;
   font-size: 14px;
 }
 
@@ -391,3 +400,27 @@ progressbar.shadhin-progress progress {
   border-bottom: 1px solid alpha(@warning, 0.35);
   padding: 6px 14px;
 }
+
+/* --- Scale & Foundation Utilities --- */
+.space-1 { margin: 4px; }
+.space-2 { margin: 8px; }
+.space-3 { margin: 12px; }
+.space-4 { margin: 16px; }
+.space-5 { margin: 24px; }
+.space-6 { margin: 32px; }
+
+.radius-sm { border-radius: 8px; }
+.radius-md { border-radius: 12px; }
+.radius-pill { border-radius: 999px; }
+
+.font-xs { font-size: 12px; }
+.font-sm { font-size: 13px; }
+.font-base { font-size: 14px; }
+.font-lg { font-size: 18px; }
+.font-title { font-size: 26px; }
+
+.address-group {
+  margin: 0;
+  padding: 0;
+}
+

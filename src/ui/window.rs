@@ -2742,7 +2742,7 @@ impl ShadhinWindow {
                         let id_clone = ws_id.clone();
                         st.dispatch(move |db| {
                             let repo = WorkspaceRepository::new(db.conn());
-                            let _ = repo.create(&id_clone, &n, "#4ade80");
+                            let _ = repo.create(&id_clone, &n, crate::ui::theme::DEFAULT_ACCENT);
                         });
                         sm_click
                             .borrow_mut()
