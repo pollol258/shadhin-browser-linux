@@ -1,17 +1,26 @@
 //! Pill-shaped address bar with security shield and action buttons
 //!
 //! Hosts the URL entry, real-time load progress bar, security status icon,
-//! interactive bookmark star with folder popover, and debounced autocomplete suggestions.
+//! interactive bookmark star with folder popover, debounced autocomplete suggestions,
+//! keyboard navigation (Arrow keys, Alt+Enter, Escape), and paste sanitization.
 
 use crate::storage::StorageService;
 use crate::storage::bookmarks::BookmarkRepository;
 use crate::storage::history::HistoryRepository;
 use crate::utils::debounce::Debounce;
+use gtk4::gdk::{Key, ModifierType};
 use gtk4::glib;
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+
+#[derive(Clone, Debug)]
+pub struct SuggestionItem {
+    pub title: String,
+    pub url: String,
+    pub row_widget: gtk4::Box,
+}
 
 pub struct AddressBar {
     container: gtk4::Box,
@@ -22,15 +31,19 @@ pub struct AddressBar {
     star_btn: gtk4::Button,
     star_icon: gtk4::Image,
     reader_btn: gtk4::Button,
-    on_activate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
     storage: RefCell<Option<StorageService>>,
     current_url: Rc<RefCell<String>>,
     current_title: Rc<RefCell<String>>,
     suggestions_popover: gtk4::Popover,
     suggestions_box: gtk4::Box,
+    suggestions_items: Rc<RefCell<Vec<SuggestionItem>>>,
+    selected_suggestion_idx: Rc<RefCell<Option<usize>>>,
+    typed_text_backup: Rc<RefCell<String>>,
     autocomplete_debounce: Debounce,
     progress_hide_debounce: Debounce,
     is_programmatic_change: Rc<RefCell<bool>>,
+    was_focused_before_click: Rc<RefCell<bool>>,
 }
 
 impl AddressBar {
@@ -51,7 +64,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .build();
 
-        let shield_icon = gtk4::Image::from_icon_name("channel-secure-symbolic");
+        let shield_icon = gtk4::Image::from_icon_name("security-low-symbolic");
         shield_icon.set_pixel_size(17);
         let lock_btn = gtk4::Button::builder()
             .child(&shield_icon)
@@ -63,16 +76,18 @@ impl AddressBar {
 
         let entry = gtk4::Entry::builder()
             .placeholder_text("Search or enter address · বাংলায় খুঁজুন")
+            .tooltip_text("Address and search bar · Type a URL or search query")
             .hexpand(true)
             .css_classes(["shadhin-address-entry"])
             .build();
+        entry.update_property(&[gtk4::accessible::Property::Label("Address and search bar")]);
         pill_box.append(&entry);
 
         let star_icon = gtk4::Image::from_icon_name("non-starred-symbolic");
         star_icon.set_pixel_size(17);
         let star_btn = gtk4::Button::builder()
             .child(&star_icon)
-            .tooltip_text("Bookmark this page")
+            .tooltip_text("Bookmark this page (Ctrl+D)")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
             .build();
@@ -90,7 +105,7 @@ impl AddressBar {
 
         container.append(&pill_box);
 
-        // 2. Thin progress bar underneath the pill
+        // 2. Thin 2px progress bar underneath the pill
         let progress_bar = gtk4::ProgressBar::builder()
             .css_classes(["shadhin-progress-bar"])
             .fraction(0.0)
@@ -113,26 +128,22 @@ impl AddressBar {
             .spacing(2)
             .width_request(450)
             .build();
+        suggestions_box.update_property(&[gtk4::accessible::Property::Label(
+            "Search and address suggestions",
+        )]);
         suggestions_popover.set_child(Some(&suggestions_box));
 
-        let on_activate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
-        let on_act_clone = on_activate.clone();
-        let popover_close = suggestions_popover.clone();
-        entry.connect_activate(move |e| {
-            popover_close.popdown();
-            let text = e.text().trim().to_string();
-            if !text.is_empty()
-                && let Some(ref cb) = *on_act_clone.borrow()
-            {
-                cb(&text);
-            }
-        });
-
+        let on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>> = Rc::new(RefCell::new(None));
         let current_url = Rc::new(RefCell::new(String::new()));
         let current_title = Rc::new(RefCell::new(String::new()));
         let autocomplete_debounce = Debounce::new();
         let progress_hide_debounce = Debounce::new();
         let is_programmatic_change = Rc::new(RefCell::new(false));
+        let was_focused_before_click = Rc::new(RefCell::new(false));
+
+        let suggestions_items: Rc<RefCell<Vec<SuggestionItem>>> = Rc::new(RefCell::new(Vec::new()));
+        let selected_suggestion_idx: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
+        let typed_text_backup = Rc::new(RefCell::new(String::new()));
 
         let addr = Self {
             container,
@@ -149,13 +160,18 @@ impl AddressBar {
             current_title,
             suggestions_popover,
             suggestions_box,
+            suggestions_items,
+            selected_suggestion_idx,
+            typed_text_backup,
             autocomplete_debounce,
             progress_hide_debounce,
             is_programmatic_change,
+            was_focused_before_click,
         };
 
         addr.setup_star_popover();
         addr.setup_autocomplete();
+        addr.setup_key_and_focus_controller();
 
         addr
     }
@@ -245,13 +261,13 @@ impl AddressBar {
         }
     }
 
-    /// Updates the security shield icon indicator
+    /// Updates the security shield icon indicator based on TLS validity
     pub fn set_security_state(&self, is_secure: bool) {
         if is_secure {
-            self.set_security_status("security-high-symbolic", "Connection is secure (HTTPS)");
+            self.set_security_status("channel-secure-symbolic", "Connection is secure (HTTPS)");
         } else {
             self.set_security_status(
-                "security-low-symbolic",
+                "channel-insecure-symbolic",
                 "Not secure: Insecure connection (HTTP)",
             );
         }
@@ -270,7 +286,8 @@ impl AddressBar {
     }
 
     /// Registers the callback invoked when the user submits text in the address bar
-    pub fn connect_activate<F: Fn(&str) + 'static>(&self, callback: F) {
+    /// Signature provides `(input_text, new_tab)` where `new_tab` is true for Alt+Enter
+    pub fn connect_activate<F: Fn(&str, bool) + 'static>(&self, callback: F) {
         *self.on_activate.borrow_mut() = Some(Box::new(callback));
     }
 
@@ -282,6 +299,208 @@ impl AddressBar {
     /// Accessor to the star button
     pub fn star_button(&self) -> &gtk4::Button {
         &self.star_btn
+    }
+
+    pub fn lock_button(&self) -> &gtk4::Button {
+        &self.lock_btn
+    }
+
+    pub fn reader_button(&self) -> &gtk4::Button {
+        &self.reader_btn
+    }
+
+    fn setup_key_and_focus_controller(&self) {
+        let entry = self.entry.clone();
+        let popover = self.suggestions_popover.clone();
+        let on_act = self.on_activate.clone();
+        let cur_url = self.current_url.clone();
+        let is_prog = self.is_programmatic_change.clone();
+        let items_cell = self.suggestions_items.clone();
+        let sel_idx_cell = self.selected_suggestion_idx.clone();
+        let backup_text_cell = self.typed_text_backup.clone();
+
+        // 1. Key controller for Enter, Alt+Enter, Escape, and Up/Down suggestion selection
+        let key_controller = gtk4::EventControllerKey::new();
+        let entry_k = entry.clone();
+        let pop_k = popover.clone();
+        let is_prog_k = is_prog.clone();
+        let items_k = items_cell.clone();
+        let sel_idx_k = sel_idx_cell.clone();
+        let backup_k = backup_text_cell.clone();
+        let on_act_k = on_act.clone();
+        let cur_url_k = cur_url.clone();
+
+        key_controller.connect_key_pressed(move |_, key, _code, state| {
+            let alt = state.contains(ModifierType::ALT_MASK);
+
+            // Alt+Enter or Enter
+            if key == Key::Return || key == Key::KP_Enter {
+                pop_k.popdown();
+                let text = {
+                    let items = items_k.borrow();
+                    if let Some(idx) = *sel_idx_k.borrow()
+                        && let Some(item) = items.get(idx)
+                    {
+                        item.url.clone()
+                    } else {
+                        entry_k.text().trim().to_string()
+                    }
+                };
+
+                if !text.is_empty()
+                    && let Some(ref cb) = *on_act_k.borrow()
+                {
+                    cb(&text, alt);
+                }
+                return glib::Propagation::Stop;
+            }
+
+            // Down Arrow: Move suggestion selection downwards
+            if key == Key::Down {
+                let items = items_k.borrow();
+                if !items.is_empty() {
+                    let curr = *sel_idx_k.borrow();
+                    let next = match curr {
+                        None => {
+                            *backup_k.borrow_mut() = entry_k.text().to_string();
+                            Some(0)
+                        }
+                        Some(idx) if idx + 1 < items.len() => Some(idx + 1),
+                        Some(_) => None, // cycle back to user typed text
+                    };
+                    *sel_idx_k.borrow_mut() = next;
+
+                    for (i, item) in items.iter().enumerate() {
+                        if Some(i) == next {
+                            item.row_widget.add_css_class("selected");
+                        } else {
+                            item.row_widget.remove_css_class("selected");
+                        }
+                    }
+
+                    *is_prog_k.borrow_mut() = true;
+                    if let Some(idx) = next {
+                        entry_k.set_text(&items[idx].url);
+                    } else {
+                        entry_k.set_text(&backup_k.borrow());
+                    }
+                    *is_prog_k.borrow_mut() = false;
+
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            // Up Arrow: Move suggestion selection upwards
+            if key == Key::Up {
+                let items = items_k.borrow();
+                if !items.is_empty() {
+                    let curr = *sel_idx_k.borrow();
+                    let prev = match curr {
+                        None => {
+                            *backup_k.borrow_mut() = entry_k.text().to_string();
+                            Some(items.len() - 1)
+                        }
+                        Some(0) => None, // cycle back to user typed text
+                        Some(idx) => Some(idx - 1),
+                    };
+                    *sel_idx_k.borrow_mut() = prev;
+
+                    for (i, item) in items.iter().enumerate() {
+                        if Some(i) == prev {
+                            item.row_widget.add_css_class("selected");
+                        } else {
+                            item.row_widget.remove_css_class("selected");
+                        }
+                    }
+
+                    *is_prog_k.borrow_mut() = true;
+                    if let Some(idx) = prev {
+                        entry_k.set_text(&items[idx].url);
+                    } else {
+                        entry_k.set_text(&backup_k.borrow());
+                    }
+                    *is_prog_k.borrow_mut() = false;
+
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            // Escape: first dismiss suggestions / revert text, second unfocus entry
+            if key == Key::Escape {
+                // If suggestions popover is currently active
+                if pop_k.is_visible() {
+                    pop_k.popdown();
+                    if !backup_k.borrow().is_empty() {
+                        *is_prog_k.borrow_mut() = true;
+                        entry_k.set_text(&backup_k.borrow());
+                        *is_prog_k.borrow_mut() = false;
+                    }
+                    return glib::Propagation::Stop;
+                }
+
+                // If text was modified from the current page URL, revert text
+                let page_url = cur_url_k.borrow().clone();
+                let current_input = entry_k.text().to_string();
+                if current_input != page_url && !page_url.is_empty() {
+                    *is_prog_k.borrow_mut() = true;
+                    entry_k.set_text(&page_url);
+                    *is_prog_k.borrow_mut() = false;
+                    return glib::Propagation::Stop;
+                }
+
+                // Second Escape: unfocus address bar
+                if let Some(root) = entry_k.root()
+                    && let Ok(win) = root.downcast::<gtk4::Window>()
+                {
+                    gtk4::prelude::RootExt::set_focus(&win, None::<&gtk4::Widget>);
+                }
+                return glib::Propagation::Stop;
+            }
+
+            glib::Propagation::Proceed
+        });
+        self.entry.add_controller(key_controller);
+
+        // 2. Click behavior: first click selects all, subsequent clicks place cursor
+        let gesture_click = gtk4::GestureClick::new();
+        let was_foc = self.was_focused_before_click.clone();
+        let entry_c = self.entry.clone();
+        gesture_click.connect_pressed(move |_, _, _, _| {
+            let already_focused = *was_foc.borrow();
+            if !already_focused {
+                let ent = entry_c.clone();
+                glib::idle_add_local_once(move || {
+                    ent.select_region(0, -1);
+                });
+            }
+        });
+        self.entry.add_controller(gesture_click);
+
+        // 3. Focus tracking and blur restore behavior
+        let cur_url_f = self.current_url.clone();
+        let entry_f = self.entry.clone();
+        let is_prog_f = self.is_programmatic_change.clone();
+        let was_foc_notify = self.was_focused_before_click.clone();
+        let pop_f = self.suggestions_popover.clone();
+        let deb_f = self.autocomplete_debounce.clone();
+
+        self.entry.connect_has_focus_notify(move |e| {
+            if e.has_focus() {
+                *was_foc_notify.borrow_mut() = true;
+            } else {
+                *was_foc_notify.borrow_mut() = false;
+                deb_f.cancel();
+                pop_f.popdown();
+
+                // Clicking away without submitting restores the active page URL
+                let active_url = cur_url_f.borrow().clone();
+                if !active_url.is_empty() && e.text() != active_url {
+                    *is_prog_f.borrow_mut() = true;
+                    entry_f.set_text(&active_url);
+                    *is_prog_f.borrow_mut() = false;
+                }
+            }
+        });
     }
 
     fn setup_star_popover(&self) {
@@ -394,24 +613,38 @@ impl AddressBar {
         let on_act = self.on_activate.clone();
         let storage_ref = self.storage.borrow().clone();
         let is_prog = self.is_programmatic_change.clone();
+        let items_cell = self.suggestions_items.clone();
+        let sel_idx_cell = self.selected_suggestion_idx.clone();
+        let shield_icon = self.shield_icon.clone();
 
-        // 1. Immediately close suggestions and cancel timer if entry loses focus
-        let pop_focus = popover.clone();
-        let deb_focus = debounce.clone();
-        self.entry.connect_has_focus_notify(move |e| {
-            if !e.has_focus() {
-                deb_focus.cancel();
-                pop_focus.popdown();
-            }
-        });
-
-        // 2. React only to actual user typing in the entry
         self.entry.connect_changed(move |e| {
-            // Guard: programmatic updates (e.g. navigation, tab switches) must never trigger autocomplete
+            // Guard: programmatic updates must not trigger autocomplete
             if *is_prog.borrow() {
                 debounce.cancel();
                 popover.popdown();
                 return;
+            }
+
+            // Paste and insertion cleaning: sanitize newlines/tabs and prevent > 10,000 chars freeze
+            let raw_text = e.text();
+            if raw_text.contains('\r')
+                || raw_text.contains('\n')
+                || raw_text.contains('\t')
+                || raw_text.len() > 10000
+            {
+                let sanitized: String = raw_text
+                    .chars()
+                    .filter(|&c| c != '\r' && c != '\n')
+                    .map(|c| if c == '\t' { ' ' } else { c })
+                    .take(10000)
+                    .collect();
+                if sanitized != raw_text {
+                    *is_prog.borrow_mut() = true;
+                    e.set_text(&sanitized);
+                    e.set_position(sanitized.len() as i32);
+                    *is_prog.borrow_mut() = false;
+                    return;
+                }
             }
 
             // Guard: do not show autocomplete if user is not actively focused on the entry
@@ -420,6 +653,10 @@ impl AddressBar {
                 popover.popdown();
                 return;
             }
+
+            // While user is actively typing, indicator displays neutral search icon
+            shield_icon.set_icon_name(Some("system-search-symbolic"));
+            shield_icon.set_tooltip_text(Some("Search or enter address"));
 
             let query = e.text().trim().to_string();
             if query.is_empty() {
@@ -433,9 +670,11 @@ impl AddressBar {
             let on_act_inner = on_act.clone();
             let storage_inner = storage_ref.clone();
             let entry_inner = entry_clone.clone();
+            let items_inner = items_cell.clone();
+            let sel_idx_inner = sel_idx_cell.clone();
 
-            debounce.debounce(Duration::from_millis(150), move || {
-                // Verify entry still has focus when timer fires
+            // Debounce autocomplete search at ~100ms
+            debounce.debounce(Duration::from_millis(100), move || {
                 if !entry_inner.has_focus() {
                     popover_inner.popdown();
                     return;
@@ -444,6 +683,8 @@ impl AddressBar {
                 while let Some(child) = list_box_inner.first_child() {
                     list_box_inner.remove(&child);
                 }
+                items_inner.borrow_mut().clear();
+                *sel_idx_inner.borrow_mut() = None;
 
                 if let Some(ref st) = storage_inner {
                     let q = query.clone();
@@ -451,6 +692,7 @@ impl AddressBar {
                     let box_final = list_box_inner.clone();
                     let on_act_final = on_act_inner.clone();
                     let entry_final = entry_inner.clone();
+                    let items_final = items_inner.clone();
 
                     st.query_async(
                         move |db| {
@@ -462,7 +704,6 @@ impl AddressBar {
                             (history_matches, bookmark_matches)
                         },
                         move |(history, bookmarks)| {
-                            // Ensure entry is still focused before showing popover
                             if !entry_final.has_focus() {
                                 pop_final.popdown();
                                 return;
@@ -473,21 +714,29 @@ impl AddressBar {
                                 return;
                             }
 
+                            let mut items_vec = Vec::new();
+
                             // 1. Search engine query item
                             let search_url = format!(
                                 "https://duckduckgo.com/?q={}",
-                                glib::Uri::escape_string(&query, None, false)
+                                crate::browser::navigation::percent_encode_query(&query)
                             );
+                            let search_title = format!("Search DuckDuckGo for \"{}\"", query);
                             let search_row = Self::create_suggestion_row(
                                 "system-search-symbolic",
-                                &format!("Search DuckDuckGo for \"{}\"", query),
+                                &search_title,
                                 &search_url,
                                 pop_final.clone(),
                                 on_act_final.clone(),
                             );
                             box_final.append(&search_row);
+                            items_vec.push(SuggestionItem {
+                                title: search_title,
+                                url: search_url,
+                                row_widget: search_row,
+                            });
 
-                            // 2. Bookmarks matches
+                            // 2. Bookmarks matches (ranked)
                             for bm in bookmarks.iter().take(3) {
                                 let row = Self::create_suggestion_row(
                                     "starred-symbolic",
@@ -497,9 +746,14 @@ impl AddressBar {
                                     on_act_final.clone(),
                                 );
                                 box_final.append(&row);
+                                items_vec.push(SuggestionItem {
+                                    title: bm.title.clone(),
+                                    url: bm.url.clone(),
+                                    row_widget: row,
+                                });
                             }
 
-                            // 3. History matches
+                            // 3. History matches (ranked by frequency and recency)
                             for h in history {
                                 let row = Self::create_suggestion_row(
                                     "document-open-recent-symbolic",
@@ -509,8 +763,14 @@ impl AddressBar {
                                     on_act_final.clone(),
                                 );
                                 box_final.append(&row);
+                                items_vec.push(SuggestionItem {
+                                    title: h.title.clone(),
+                                    url: h.url.clone(),
+                                    row_widget: row,
+                                });
                             }
 
+                            *items_final.borrow_mut() = items_vec;
                             pop_final.popup();
                         },
                     );
@@ -519,33 +779,12 @@ impl AddressBar {
         });
     }
 
-    pub fn lock_button(&self) -> &gtk4::Button {
-        &self.lock_btn
-    }
-
-    pub fn reader_button(&self) -> &gtk4::Button {
-        &self.reader_btn
-    }
-
-    pub fn set_tls_state(&self, has_tls: bool, valid: bool) {
-        if !has_tls {
-            self.shield_icon.set_icon_name(Some("security-high-symbolic"));
-            self.shield_icon.set_tooltip_text(Some("No secure site connection"));
-        } else if valid {
-            self.shield_icon.set_icon_name(Some("channel-secure-symbolic"));
-            self.shield_icon.set_tooltip_text(Some("Connection secure"));
-        } else {
-            self.shield_icon.set_icon_name(Some("channel-insecure-symbolic"));
-            self.shield_icon.set_tooltip_text(Some("Certificate error: connection insecure"));
-        }
-    }
-
     fn create_suggestion_row(
         icon_name: &str,
         title: &str,
         url: &str,
         popover: gtk4::Popover,
-        on_act: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+        on_act: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
     ) -> gtk4::Box {
         let row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -578,7 +817,7 @@ impl AddressBar {
         gesture.connect_pressed(move |_, _, _, _| {
             popover.popdown();
             if let Some(ref cb) = *on_act.borrow() {
-                cb(&target_url);
+                cb(&target_url, false);
             }
         });
         row.add_controller(gesture);

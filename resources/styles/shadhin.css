@@ -372,3 +372,15 @@ progressbar.shadhin-progress progress {
 .error-text {
   color: @error;
 }
+
+/* --- Suggestions Popover --- */
+.shadhin-suggestion-row {
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background-color 120ms ease;
+}
+
+.shadhin-suggestion-row:hover,
+.shadhin-suggestion-row.selected {
+  background-color: @hover_bg;
+}

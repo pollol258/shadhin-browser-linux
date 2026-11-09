@@ -58,6 +58,11 @@ pub struct TabUiItem {
     pub tls_box: gtk4::Box,
     pub tls_host_label: gtk4::Label,
     pub tls_detail_label: gtk4::Label,
+    pub tls_advanced_revealer: gtk4::Revealer,
+    pub tls_advanced_btn: gtk4::Button,
+    pub tls_error_flags_label: gtk4::Label,
+    pub tls_proceed_btn: gtk4::Button,
+    pub active_tls_cert: RefCell<Option<(gio::TlsCertificate, String, String)>>,
     pub permission_revealer: gtk4::Revealer,
     pub permission_label: gtk4::Label,
     pub permission_icon: gtk4::Image,
@@ -121,6 +126,65 @@ pub struct NavigationContext {
     pub persistence_allowed: bool,
     pub load_line: gtk4::ProgressBar,
     pub sandbox_banner: adw::Banner,
+    pub pending_bare_domain_fallbacks: Rc<RefCell<std::collections::HashMap<TabId, String>>>,
+}
+
+/// Updates address bar security shield based on real WebView TLS state
+pub fn update_security_indicator_from_webview(
+    tb: &ShadhinToolbar,
+    wv: &webkit6::WebView,
+    uri: &str,
+) {
+    if uri.is_empty() || uri == "about:newtab" || uri == "shadhin:newtab" || uri == "about:blank" {
+        tb.address_bar()
+            .set_security_status("security-low-symbolic", "Internal page: New Tab");
+        return;
+    }
+
+    if uri.starts_with("about:") || uri.starts_with("shadhin:") {
+        tb.address_bar()
+            .set_security_status("security-low-symbolic", "Internal application page");
+        return;
+    }
+
+    if uri.starts_with("file://") {
+        tb.address_bar()
+            .set_security_status("security-low-symbolic", "Local file system");
+        return;
+    }
+
+    if uri.starts_with("http://") {
+        tb.address_bar().set_security_status(
+            "channel-insecure-symbolic",
+            "Not secure: Insecure connection (HTTP)",
+        );
+        return;
+    }
+
+    if uri.starts_with("https://") {
+        if let Some((_cert, flags)) = wv.tls_info() {
+            if flags.is_empty() {
+                tb.address_bar().set_security_status(
+                    "channel-secure-symbolic",
+                    "Connection is secure (HTTPS)",
+                );
+            } else {
+                tb.address_bar().set_security_status(
+                    "channel-insecure-symbolic",
+                    "Certificate error: Connection is not private",
+                );
+            }
+        } else {
+            tb.address_bar().set_security_status(
+                "security-low-symbolic",
+                "Connection state unverified",
+            );
+        }
+        return;
+    }
+
+    tb.address_bar()
+        .set_security_status("security-low-symbolic", "Unverified URI scheme");
 }
 
 impl ShadhinWindow {
@@ -361,6 +425,8 @@ impl ShadhinWindow {
             toast_ov.add_toast(toast);
         });
 
+        let pending_bare_domain_fallbacks =
+            Rc::new(RefCell::new(std::collections::HashMap::new()));
         let nav_ctx = Rc::new(NavigationContext {
             tab_manager: tab_manager.clone(),
             config: config.clone(),
@@ -378,6 +444,7 @@ impl ShadhinWindow {
             persistence_allowed,
             load_line: load_line.clone(),
             sandbox_banner: sandbox_banner.clone(),
+            pending_bare_domain_fallbacks,
         });
 
         // Wire top TabBar '+' new tab button
@@ -568,13 +635,24 @@ impl ShadhinWindow {
 
         if let Some(active_tab_cell) = tm.active_tab() {
             let active = active_tab_cell.borrow();
+            tb.set_is_loading(active.is_loading);
             if active.is_newtab() {
                 tb.address_bar().set_text_if_unfocused("");
-                tb.address_bar().set_security_state(true);
+                tb.address_bar().set_security_status("security-low-symbolic", "New Tab");
             } else {
                 tb.address_bar().set_text_if_unfocused(&active.url);
-                tb.address_bar()
-                    .set_security_state(active.url.starts_with("https://"));
+                tb.address_bar().update_current_page(&active.url, &active.title);
+                if active.url.starts_with("http://") {
+                    tb.address_bar().set_security_status(
+                        "channel-insecure-symbolic",
+                        "Not secure: Insecure connection (HTTP)",
+                    );
+                } else if active.url.starts_with("about:") || active.url.starts_with("shadhin:") {
+                    tb.address_bar().set_security_status(
+                        "security-low-symbolic",
+                        "Internal application page",
+                    );
+                }
             }
         }
     }
@@ -677,8 +755,43 @@ impl NavigationContext {
             .label("Go Back to Safety")
             .css_classes(["suggested-action", "shadhin-nav-btn"])
             .build();
+        let tls_advanced_btn = gtk4::Button::builder()
+            .label("Advanced")
+            .css_classes(["flat", "shadhin-nav-btn"])
+            .build();
         tls_actions.append(&back_safety_btn);
+        tls_actions.append(&tls_advanced_btn);
         tls_box.append(&tls_actions);
+
+        let tls_advanced_revealer = gtk4::Revealer::builder()
+            .transition_type(gtk4::RevealerTransitionType::SlideDown)
+            .reveal_child(false)
+            .build();
+
+        let advanced_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(8)
+            .margin_top(12)
+            .halign(gtk4::Align::Center)
+            .build();
+
+        let tls_error_flags_label = gtk4::Label::builder()
+            .label("Certificate error details")
+            .css_classes(["dim-label"])
+            .wrap(true)
+            .justify(gtk4::Justification::Center)
+            .build();
+        advanced_box.append(&tls_error_flags_label);
+
+        let tls_proceed_btn = gtk4::Button::builder()
+            .label("Accept Risk and Continue (Unsafe)")
+            .css_classes(["destructive-action", "flat"])
+            .halign(gtk4::Align::Center)
+            .build();
+        advanced_box.append(&tls_proceed_btn);
+
+        tls_advanced_revealer.set_child(Some(&advanced_box));
+        tls_box.append(&tls_advanced_revealer);
         stack.add_named(&tls_box, Some("tls"));
 
         // 4. HTTPS-Only Fallback Interstitial view
@@ -796,6 +909,11 @@ impl NavigationContext {
             tls_box,
             tls_host_label,
             tls_detail_label,
+            tls_advanced_revealer: tls_advanced_revealer.clone(),
+            tls_advanced_btn: tls_advanced_btn.clone(),
+            tls_error_flags_label,
+            tls_proceed_btn: tls_proceed_btn.clone(),
+            active_tls_cert: RefCell::new(None),
             permission_revealer: permission_revealer.clone(),
             permission_label,
             permission_icon,
@@ -828,21 +946,45 @@ impl NavigationContext {
         let nav_nt = self.clone();
         let page_nt = page.clone();
         ui_item.newtab.set_on_navigate(move |input| {
-            info!("NewTab navigating to: {input}");
-            let target = classify_input(input, &nav_nt.config.borrow().search_engine_url);
+            info!("NewTab search/navigation initiated");
+            let is_dev = std::env::var("SHADHIN_DEV").is_ok()
+                || std::env::var("SHADHIN_DEV_CSS").is_ok();
+            let settings = crate::browser::navigation::ClassificationSettings {
+                search_template: nav_nt.config.borrow().search_engine_url.clone(),
+                allow_file: true,
+                developer_extras: is_dev,
+            };
+            let target = classify_input(input, &settings);
             nav_nt.execute_navigation(tab_idx, &target, &page_nt);
         });
 
         // If initial_url was provided and not a newtab page, initialize the WebView and load
         if let Some(url) = initial_url {
             if url != "about:newtab" && url != "shadhin:newtab" {
-                let target = classify_input(url, &self.config.borrow().search_engine_url);
+                let is_dev = std::env::var("SHADHIN_DEV").is_ok()
+                    || std::env::var("SHADHIN_DEV_CSS").is_ok();
+                let settings = crate::browser::navigation::ClassificationSettings {
+                    search_template: self.config.borrow().search_engine_url.clone(),
+                    allow_file: true,
+                    developer_extras: is_dev,
+                };
+                let target = classify_input(url, &settings);
                 self.execute_navigation(tab_idx, &target, &page);
             } else {
                 stack.set_visible_child_name("newtab");
+                self.toolbar.address_bar().set_text("");
+                self.toolbar
+                    .address_bar()
+                    .set_security_status("security-low-symbolic", "New Tab");
+                self.toolbar.address_bar().focus();
             }
         } else {
             stack.set_visible_child_name("newtab");
+            self.toolbar.address_bar().set_text("");
+            self.toolbar
+                .address_bar()
+                .set_security_status("security-low-symbolic", "New Tab");
+            self.toolbar.address_bar().focus();
         }
 
         // Wire Retry button on Error view
@@ -852,9 +994,41 @@ impl NavigationContext {
             let tm = nav_retry.tab_manager.borrow();
             if let Some(tab_cell) = tm.get_tab(tab_idx) {
                 let url = tab_cell.borrow().url.clone();
-                let target = classify_input(&url, &nav_retry.config.borrow().search_engine_url);
+                let is_dev = std::env::var("SHADHIN_DEV").is_ok()
+                    || std::env::var("SHADHIN_DEV_CSS").is_ok();
+                let settings = crate::browser::navigation::ClassificationSettings {
+                    search_template: nav_retry.config.borrow().search_engine_url.clone(),
+                    allow_file: true,
+                    developer_extras: is_dev,
+                };
+                let target = classify_input(&url, &settings);
                 drop(tm);
                 nav_retry.execute_navigation(tab_idx, &target, &page_retry);
+            }
+        });
+
+        // Wire Advanced button toggle and Accept Risk button on TLS view
+        let rev_tls = tls_advanced_revealer;
+        tls_advanced_btn.connect_clicked(move |_| {
+            rev_tls.set_reveal_child(!rev_tls.reveals_child());
+        });
+
+        let nav_tls_proceed = self.clone();
+        let ui_item_proceed = ui_item.clone();
+        let stack_proceed = stack.clone();
+        tls_proceed_btn.connect_clicked(move |_| {
+            if let Some((cert, host, failing_uri)) =
+                ui_item_proceed.active_tls_cert.borrow_mut().take()
+            {
+                info!("User accepted TLS certificate risk for host: {host}");
+                nav_tls_proceed
+                    .session
+                    .borrow()
+                    .allow_tls_certificate_for_host(&cert, &host);
+                if let Some(ref wv) = *ui_item_proceed.webview.borrow() {
+                    stack_proceed.set_visible_child_name("web");
+                    wv.load_uri(&failing_uri);
+                }
             }
         });
 
@@ -1053,26 +1227,16 @@ impl NavigationContext {
                         .https_manager
                         .borrow_mut()
                         .clear_upgrade_attempt(tab_id);
+                    nav_lc
+                        .pending_bare_domain_fallbacks
+                        .borrow_mut()
+                        .remove(&tab_id);
                     if let Some(uri) = wv.uri() {
                         let uri_str = uri.as_str();
                         tab.url = uri_str.to_string();
                         tb_lc.address_bar().set_text_if_unfocused(uri_str);
-                        if uri_str.starts_with("https://") {
-                            tb_lc.address_bar().set_security_status(
-                                "security-high-symbolic",
-                                "Connection is secure (HTTPS)",
-                            );
-                        } else if uri_str.starts_with("http://") {
-                            tb_lc.address_bar().set_security_status(
-                                "channel-insecure-symbolic",
-                                "Connection is not secure (HTTP)",
-                            );
-                        } else {
-                            tb_lc.address_bar().set_security_status(
-                                "security-low-symbolic",
-                                "Internal application page",
-                            );
-                        }
+                        update_security_indicator_from_webview(&tb_lc, wv, uri_str);
+                        tb_lc.address_bar().update_current_page(uri_str, &tab.title);
                         if let Some(host) = extract_host_from_uri(uri_str) {
                             tb_lc.privacy_popover().update_for_site(Some(&host), true);
                         }
@@ -1114,6 +1278,12 @@ impl NavigationContext {
 
                     drop(tab);
 
+                    if let Some(uri) = wv.uri() {
+                        let uri_str = uri.as_str();
+                        update_security_indicator_from_webview(&tb_lc, wv, uri_str);
+                        tb_lc.address_bar().update_current_page(uri_str, &current_title);
+                    }
+
                     crate::utils::net_diagnostics::record_load_finished(&current_url);
 
                     // Record visit to history for web URLs if persistence is allowed
@@ -1131,6 +1301,21 @@ impl NavigationContext {
                     nav_lc.sync_tabs();
                 }
                 _ => {}
+            }
+        });
+
+        // 1b. connect_uri_notify (follows fragment and client pushState changes)
+        let tb_uri = self.toolbar.clone();
+        let tab_c_uri = tab_c.clone();
+        webview.connect_uri_notify(move |wv| {
+            if let Some(uri) = wv.uri() {
+                let uri_str = uri.as_str();
+                let mut tab = tab_c_uri.borrow_mut();
+                tab.url = uri_str.to_string();
+                let title = tab.title.clone();
+                drop(tab);
+                tb_uri.address_bar().set_text_if_unfocused(uri_str);
+                tb_uri.address_bar().update_current_page(uri_str, &title);
             }
         });
 
@@ -1312,15 +1497,57 @@ impl NavigationContext {
         let tab_c_fail = tab_c.clone();
         let https_mgr_lf = self.https_manager.clone();
         let cfg_fail = self.config.clone();
+        let nav_fail = self.clone();
 
         webview.connect_load_failed(move |wv, load_event, failing_uri, error| {
             crate::utils::net_diagnostics::record_load_failed(failing_uri, load_event, error);
 
+            tb_fail.set_is_loading(false);
+            tb_fail.address_bar().set_progress(0.0);
+            nav_fail.load_line.set_visible(false);
+            nav_fail.load_line.set_fraction(0.0);
+
             // Differentiate cancelled loads resulting from policy interventions (decision.ignore)
+            // or Stop button clicks
             if crate::browser::webview::is_cancellation_error(error) {
                 tracing::debug!(
                     "Ignoring cancelled load for {failing_uri} (event: {load_event:?})"
                 );
+                let mut tab = tab_c_fail.borrow_mut();
+                tab.is_loading = false;
+                tab.progress = 0.0;
+                return true;
+            }
+
+            // Keep failing URI in address bar so user can edit it
+            tb_fail.address_bar().set_text_if_unfocused(failing_uri);
+            tb_fail.address_bar().set_security_status(
+                "channel-insecure-symbolic",
+                "Connection failed",
+            );
+
+            // Check if bare domain HTTPS upgrade failed -> offer HTTP fallback
+            if let Some(fallback_http) = nav_fail
+                .pending_bare_domain_fallbacks
+                .borrow_mut()
+                .remove(&tab_id)
+            {
+                let host = extract_host_from_uri(failing_uri).unwrap_or_else(|| failing_uri.to_string());
+                tb_fail.set_is_loading(false);
+                page_fail.set_title("Connection Not Available");
+                let mut tab = tab_c_fail.borrow_mut();
+                tab.is_loading = false;
+                tab.title = "Connection Not Available".to_string();
+                drop(tab);
+
+                ui_fail.https_fallback_url.borrow_mut().replace(fallback_http);
+                ui_fail.https_host_label.set_label(&host);
+                ui_fail.https_desc_label.set_label(
+                    "HTTPS connection failed. Click below to try connecting via insecure HTTP.",
+                );
+                ui_fail.https_continue_btn.set_label("Try HTTP (Not Secure)");
+                ui_fail.https_continue_btn.set_visible(true);
+                ui_fail.stack.set_visible_child_name("https_error");
                 return true;
             }
 
@@ -1400,9 +1627,17 @@ impl NavigationContext {
         let ui_tls = ui_item.clone();
         let page_tls = page.clone();
         let tab_c_tls = tab_c.clone();
+        let tb_tls = self.toolbar.clone();
 
-        webview.connect_load_failed_with_tls_errors(move |wv, failing_uri, _cert, errors| {
+        webview.connect_load_failed_with_tls_errors(move |wv, failing_uri, cert, errors| {
             crate::utils::net_diagnostics::record_tls_failure(failing_uri, errors);
+
+            tb_tls.set_is_loading(false);
+            tb_tls.address_bar().set_text_if_unfocused(failing_uri);
+            tb_tls.address_bar().set_security_status(
+                "channel-insecure-symbolic",
+                "Certificate error: Connection is not private",
+            );
 
             let tab_url = tab_c_tls.borrow().url.clone();
             let wv_uri = wv.uri().map(|u| u.to_string()).unwrap_or_default();
@@ -1424,13 +1659,50 @@ impl NavigationContext {
             let mut tab = tab_c_tls.borrow_mut();
             tab.is_loading = false;
             tab.title = "Privacy Warning".to_string();
-            ui_tls
-                .tls_host_label
-                .set_label(&format!("Host: {failing_uri}"));
+            drop(tab);
+
+            let host = extract_host_from_uri(failing_uri).unwrap_or_else(|| failing_uri.to_string());
+            ui_tls.tls_host_label.set_label(&format!("Host: {host}"));
+
+            let mut error_details = Vec::new();
+            if errors.contains(gio::TlsCertificateFlags::UNKNOWN_CA) {
+                error_details.push("Issuer authority is unknown or untrusted");
+            }
+            if errors.contains(gio::TlsCertificateFlags::BAD_IDENTITY) {
+                error_details.push("Certificate hostname does not match destination");
+            }
+            if errors.contains(gio::TlsCertificateFlags::EXPIRED) {
+                error_details.push("Certificate has expired");
+            }
+            if errors.contains(gio::TlsCertificateFlags::NOT_ACTIVATED) {
+                error_details.push("Certificate is not yet active");
+            }
+            if errors.contains(gio::TlsCertificateFlags::REVOKED) {
+                error_details.push("Certificate has been revoked");
+            }
+            if errors.contains(gio::TlsCertificateFlags::INSECURE) {
+                error_details.push("Certificate uses an insecure signature algorithm");
+            }
+            if error_details.is_empty() {
+                error_details.push("Certificate validation failure");
+            }
+
             ui_tls.tls_detail_label.set_label(
                 "Attackers might be trying to steal your information from this site.\n\
                  Shadhin Browser blocked this connection to protect your privacy.",
             );
+            ui_tls.tls_error_flags_label.set_label(&format!(
+                "Security Diagnostics: {}\nFlags: {:?}",
+                error_details.join(", "),
+                errors
+            ));
+            ui_tls.tls_advanced_revealer.set_reveal_child(false);
+            ui_tls.active_tls_cert.borrow_mut().replace((
+                cert.clone(),
+                host,
+                failing_uri.to_string(),
+            ));
+
             ui_tls.stack.set_visible_child_name("tls");
             true
         });
@@ -1585,6 +1857,12 @@ impl NavigationContext {
                         .borrow_mut()
                         .clear_upgrade_attempt(tab_id);
 
+                    if let Some(bare_part) = clean_url.strip_prefix("https://") {
+                        self.pending_bare_domain_fallbacks
+                            .borrow_mut()
+                            .insert(tab_id, format!("http://{bare_part}"));
+                    }
+
                     let mut tab = tab_cell.borrow_mut();
                     tab.url = clean_url.clone();
                     tab.title = "Loading...".to_string();
@@ -1592,9 +1870,10 @@ impl NavigationContext {
                     tab.has_active_webview = true;
                     page.set_title("Loading...");
                     self.toolbar.address_bar().set_text(&clean_url);
+                    self.toolbar.set_is_loading(true);
                     self.toolbar
                         .address_bar()
-                        .set_security_state(clean_url.starts_with("https://"));
+                        .set_security_status("security-low-symbolic", "Connecting...");
                 }
                 drop(tm);
 
@@ -1638,7 +1917,9 @@ impl NavigationContext {
                         tab.is_loading = false;
                         page.set_title("Bookmarks");
                         self.toolbar.address_bar().set_text("about:bookmarks");
-                        self.toolbar.address_bar().set_security_state(true);
+                        self.toolbar
+                            .address_bar()
+                            .set_security_status("security-low-symbolic", "Internal application page");
                     }
                     drop(tm);
                     if let Some(item) = ui_item {
@@ -1656,7 +1937,9 @@ impl NavigationContext {
                         tab.is_loading = false;
                         page.set_title("History");
                         self.toolbar.address_bar().set_text("about:history");
-                        self.toolbar.address_bar().set_security_state(true);
+                        self.toolbar
+                            .address_bar()
+                            .set_security_status("security-low-symbolic", "Internal application page");
                     }
                     drop(tm);
                     if let Some(item) = ui_item {
@@ -1674,7 +1957,9 @@ impl NavigationContext {
                         tab.is_loading = false;
                         page.set_title("Downloads");
                         self.toolbar.address_bar().set_text("about:downloads");
-                        self.toolbar.address_bar().set_security_state(true);
+                        self.toolbar
+                            .address_bar()
+                            .set_security_status("security-low-symbolic", "Internal application page");
                     }
                     drop(tm);
                     if let Some(item) = ui_item {
@@ -1695,7 +1980,9 @@ impl NavigationContext {
                         tab.is_loading = false;
                         page.set_title("New Tab");
                         self.toolbar.address_bar().set_text("");
-                        self.toolbar.address_bar().set_security_state(true);
+                        self.toolbar
+                            .address_bar()
+                            .set_security_status("security-low-symbolic", "New Tab");
                     }
                     drop(tm);
 
@@ -1753,7 +2040,9 @@ impl NavigationContext {
             let active = active_tab_cell.borrow();
             if active.is_newtab() {
                 self.toolbar.address_bar().set_text_if_unfocused("");
-                self.toolbar.address_bar().set_security_state(true);
+                self.toolbar
+                    .address_bar()
+                    .set_security_status("security-low-symbolic", "New Tab");
                 self.toolbar.set_can_go_back(false);
                 self.toolbar.set_can_go_forward(false);
                 self.toolbar.set_is_loading(false);
@@ -1764,7 +2053,21 @@ impl NavigationContext {
                     .set_text_if_unfocused(&active.url);
                 self.toolbar
                     .address_bar()
-                    .set_security_state(active.url.starts_with("https://"));
+                    .update_current_page(&active.url, &active.title);
+                let items = self.tab_items.borrow();
+                if let Some(ui_item) = items.get(sel_idx)
+                    && let Some(ref wv) = *ui_item.webview.borrow()
+                {
+                    update_security_indicator_from_webview(&self.toolbar, wv, &active.url);
+                } else if active.url.starts_with("http://") {
+                    self.toolbar
+                        .address_bar()
+                        .set_security_status("channel-insecure-symbolic", "Not secure: Insecure connection (HTTP)");
+                } else if active.url.starts_with("about:") || active.url.starts_with("shadhin:") {
+                    self.toolbar
+                        .address_bar()
+                        .set_security_status("security-low-symbolic", "Internal application page");
+                }
                 self.toolbar.set_can_go_back(active.can_go_back);
                 self.toolbar.set_can_go_forward(active.can_go_forward);
                 self.toolbar.set_is_loading(active.is_loading);
@@ -2015,6 +2318,11 @@ impl ShadhinWindow {
                     && let Some(ref wv) = *item.webview.borrow()
                 {
                     fb_change.attach_webview(wv);
+                    if let Some(tab_c) = tm_change.borrow().get_tab(idx) {
+                        let b = tab_c.borrow();
+                        update_security_indicator_from_webview(&tb_change, wv, &b.url);
+                        tb_change.address_bar().update_current_page(&b.url, &b.title);
+                    }
                 }
             }
         });
@@ -2056,10 +2364,19 @@ impl ShadhinWindow {
         let tv_addr = self.tab_view.clone();
         let cfg_addr = self.config.clone();
 
-        self.toolbar.address_bar().connect_activate(move |input| {
-            if let Some(page) = tv_addr.selected_page() {
+        self.toolbar.address_bar().connect_activate(move |input, new_tab| {
+            if new_tab {
+                nav_addr.create_tab(Some(input), None);
+            } else if let Some(page) = tv_addr.selected_page() {
                 let idx = tv_addr.page_position(&page) as usize;
-                let target = classify_input(input, &cfg_addr.borrow().search_engine_url);
+                let is_dev = std::env::var("SHADHIN_DEV").is_ok()
+                    || std::env::var("SHADHIN_DEV_CSS").is_ok();
+                let settings = crate::browser::navigation::ClassificationSettings {
+                    search_template: cfg_addr.borrow().search_engine_url.clone(),
+                    allow_file: true,
+                    developer_extras: is_dev,
+                };
+                let target = classify_input(input, &settings);
                 nav_addr.execute_navigation(idx, &target, &page);
             }
         });
@@ -2098,6 +2415,8 @@ impl ShadhinWindow {
 
         let items_r = items_nav.clone();
         let tv_r = tv_nav.clone();
+        let tb_r = self.toolbar.clone();
+        let ll_r = self.load_line.clone();
         self.toolbar.connect_reload(move |is_loading| {
             if let Some(page) = tv_r.selected_page() {
                 let idx = tv_r.page_position(&page) as usize;
@@ -2107,6 +2426,9 @@ impl ShadhinWindow {
                 {
                     if is_loading {
                         wv.stop_loading();
+                        tb_r.set_is_loading(false);
+                        ll_r.set_visible(false);
+                        ll_r.set_fraction(0.0);
                     } else {
                         wv.reload();
                     }
@@ -2479,8 +2801,11 @@ impl ShadhinWindow {
                 return glib::Propagation::Stop;
             }
 
-            // Ctrl+L or F6: Focus address bar
-            if (ctrl && key == Key::l) || key == Key::F6 {
+            // Ctrl+L, Alt+D, or F6: Focus address bar and select all
+            if (ctrl && key == Key::l)
+                || (alt && (key == Key::d || key == Key::D))
+                || key == Key::F6
+            {
                 tb_key.address_bar().focus();
                 return glib::Propagation::Stop;
             }
