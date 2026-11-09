@@ -301,6 +301,11 @@ impl AddressBar {
         &self.star_btn
     }
 
+    /// Accessor to the address entry
+    pub fn entry(&self) -> &gtk4::Entry {
+        &self.entry
+    }
+
     pub fn lock_button(&self) -> &gtk4::Button {
         &self.lock_btn
     }
