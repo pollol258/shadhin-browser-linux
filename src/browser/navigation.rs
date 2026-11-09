@@ -348,6 +348,146 @@ pub fn percent_encode_query(input: &str) -> String {
     encoded
 }
 
+/// Expands a bare word on Ctrl+Enter (word -> https://www.word.com)
+pub fn expand_ctrl_enter(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // If it already has a scheme, slash, space, or dot, it is not a bare word
+    if trimmed.contains("://") || trimmed.contains('/') || trimmed.contains(' ') || trimmed.contains('.') {
+        trimmed.to_string()
+    } else {
+        format!("https://www.{trimmed}.com")
+    }
+}
+
+/// Checks if token is localhost or a private IPv4 / IPv6 network address
+/// Covers: 127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+pub fn is_localhost_or_private_ip(host: &str) -> bool {
+    let host_part = host.split('/').next().unwrap_or(host);
+    let clean_host = if host_part.starts_with('[') {
+        if let Some(end) = host_part.find(']') {
+            &host_part[1..end]
+        } else {
+            host_part.trim_start_matches('[').trim_end_matches(']')
+        }
+    } else if is_bare_ipv6(host_part) {
+        host_part
+    } else {
+        host_part.split(':').next().unwrap_or(host_part)
+    };
+
+    if is_localhost(clean_host) {
+        return true;
+    }
+
+    if let Ok(ip) = clean_host.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                let octets = v4.octets();
+                // 127.0.0.0/8 (Loopback)
+                if octets[0] == 127 {
+                    return true;
+                }
+                // 10.0.0.0/8 (Private)
+                if octets[0] == 10 {
+                    return true;
+                }
+                // 172.16.0.0/12 (Private: 172.16.0.0 - 172.31.255.255)
+                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                    return true;
+                }
+                // 192.168.0.0/16 (Private)
+                if octets[0] == 192 && octets[1] == 168 {
+                    return true;
+                }
+                // 169.254.0.0/16 (Link-local)
+                if octets[0] == 169 && octets[1] == 254 {
+                    return true;
+                }
+                false
+            }
+            std::net::IpAddr::V6(v6) => {
+                // ::1 (Loopback) or Unique Local Address (fc00::/7)
+                v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+            }
+        }
+    } else {
+        false
+    }
+}
+
+/// Classification of network load failures
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkFailureKind {
+    /// Connection-level failure (connection refused, no HTTPS listener on 443, timed out, unreachable)
+    ConnectionRefusedOrTimedOut,
+    /// TLS or Certificate error (expired, unknown CA, wrong host, revoked)
+    TlsCertificateError,
+    /// User or policy cancellation
+    Cancelled,
+    /// Other error (e.g. DNS resolution failure, malformed headers)
+    Other,
+}
+
+/// Classifies network failure by domain, code, and error message
+pub fn classify_network_failure_by_reason(
+    error_domain: &str,
+    error_code: i32,
+    error_message: &str,
+) -> NetworkFailureKind {
+    // 1. Cancellation check (WebKit NetworkError::Cancelled = 302, PolicyError::FrameLoadInterrupted = 102)
+    if error_code == 302 || error_code == 102 || error_message.to_lowercase().contains("cancelled") {
+        return NetworkFailureKind::Cancelled;
+    }
+
+    let msg_lower = error_message.to_lowercase();
+    let dom_lower = error_domain.to_lowercase();
+
+    // 2. TLS / Certificate error check
+    if dom_lower.contains("tls")
+        || dom_lower.contains("certificate")
+        || dom_lower.contains("ssl")
+        || msg_lower.contains("certificate")
+        || msg_lower.contains("tls")
+        || msg_lower.contains("ssl")
+        || msg_lower.contains("expired")
+        || msg_lower.contains("unknown ca")
+        || msg_lower.contains("bad identity")
+        || msg_lower.contains("revoked")
+    {
+        return NetworkFailureKind::TlsCertificateError;
+    }
+
+    // 3. Connection-level failure (connection refused, timed out, host unreachable, no listener on 443)
+    if msg_lower.contains("connection refused")
+        || msg_lower.contains("timed out")
+        || msg_lower.contains("timeout")
+        || msg_lower.contains("cant_connect")
+        || msg_lower.contains("cannot connect")
+        || msg_lower.contains("no route to host")
+        || msg_lower.contains("network is unreachable")
+        || error_code == 4 // SOUP_STATUS_CANT_CONNECT
+        || error_code == 7 // SOUP_STATUS_IO_ERROR
+    {
+        return NetworkFailureKind::ConnectionRefusedOrTimedOut;
+    }
+
+    NetworkFailureKind::Other
+}
+
+/// Determines whether a load failure is eligible for HTTP fallback
+///
+/// CRITICAL INVARIANT: NEVER fall back to HTTP after a TLS or certificate error!
+/// HTTP fallback is only permitted for pure connection-level failures (connection refused, timed out).
+pub fn is_eligible_for_http_fallback(failure_kind: NetworkFailureKind, is_tls_error: bool) -> bool {
+    if is_tls_error {
+        return false;
+    }
+    failure_kind == NetworkFailureKind::ConnectionRefusedOrTimedOut
+}
+
 /// Checks if token is localhost or localhost:port
 fn is_localhost(token: &str) -> bool {
     let host_part = token.split('/').next().unwrap_or(token);
@@ -854,5 +994,102 @@ mod tests {
             extract_display_host("https://sub.domain.co.uk:9000/"),
             Some("sub.domain.co.uk".to_string())
         );
+    }
+
+    #[test]
+    fn test_expand_ctrl_enter_bare_word() {
+        // Bare words get expanded to https://www.word.com
+        assert_eq!(expand_ctrl_enter("apple"), "https://www.apple.com");
+        assert_eq!(expand_ctrl_enter("rust-lang"), "https://www.rust-lang.com");
+        assert_eq!(expand_ctrl_enter("  wikipedia  "), "https://www.wikipedia.com");
+
+        // Already formatted domains or URLs are NOT mangled
+        assert_eq!(expand_ctrl_enter("example.org"), "example.org");
+        assert_eq!(expand_ctrl_enter("https://example.com"), "https://example.com");
+        assert_eq!(expand_ctrl_enter("spaced query"), "spaced query");
+        assert_eq!(expand_ctrl_enter(""), "");
+    }
+
+    #[test]
+    fn test_is_localhost_or_private_ip() {
+        // Localhost and loopback
+        assert!(is_localhost_or_private_ip("localhost"));
+        assert!(is_localhost_or_private_ip("localhost:8080"));
+        assert!(is_localhost_or_private_ip("127.0.0.1"));
+        assert!(is_localhost_or_private_ip("127.0.0.254:3000"));
+        assert!(is_localhost_or_private_ip("[::1]"));
+        assert!(is_localhost_or_private_ip("[::1]:8000"));
+
+        // Private IP ranges (10/8, 172.16/12, 192.168/16)
+        assert!(is_localhost_or_private_ip("10.0.0.1"));
+        assert!(is_localhost_or_private_ip("10.254.254.1:8080"));
+        assert!(is_localhost_or_private_ip("172.16.0.1"));
+        assert!(is_localhost_or_private_ip("172.31.255.255"));
+        assert!(is_localhost_or_private_ip("192.168.1.1"));
+        assert!(is_localhost_or_private_ip("192.168.0.100:9000"));
+
+        // Public IPs and domains are NOT localhost or private
+        assert!(!is_localhost_or_private_ip("example.com"));
+        assert!(!is_localhost_or_private_ip("172.32.0.1")); // outside 172.16/12
+        assert!(!is_localhost_or_private_ip("8.8.8.8"));
+        assert!(!is_localhost_or_private_ip("1.1.1.1"));
+    }
+
+    #[test]
+    fn test_failure_classification_and_http_fallback_eligibility() {
+        // 1. Connection-level failures are eligible for HTTP fallback
+        let conn_refused = classify_network_failure_by_reason(
+            "soup-error-quark",
+            4,
+            "Could not connect: Connection refused",
+        );
+        assert_eq!(conn_refused, NetworkFailureKind::ConnectionRefusedOrTimedOut);
+        assert!(is_eligible_for_http_fallback(conn_refused, false));
+
+        let timed_out = classify_network_failure_by_reason(
+            "soup-error-quark",
+            7,
+            "Connection timed out",
+        );
+        assert_eq!(timed_out, NetworkFailureKind::ConnectionRefusedOrTimedOut);
+        assert!(is_eligible_for_http_fallback(timed_out, false));
+
+        // 2. TLS and Certificate errors are NEVER eligible for HTTP fallback!
+        let tls_expired = classify_network_failure_by_reason(
+            "g-tls-error-quark",
+            1,
+            "SSL/TLS Certificate has expired",
+        );
+        assert_eq!(tls_expired, NetworkFailureKind::TlsCertificateError);
+        assert!(!is_eligible_for_http_fallback(tls_expired, false));
+        assert!(!is_eligible_for_http_fallback(tls_expired, true));
+
+        let tls_unknown_ca = classify_network_failure_by_reason(
+            "g-tls-certificate-error-quark",
+            2,
+            "Certificate authority is unknown or self-signed",
+        );
+        assert_eq!(tls_unknown_ca, NetworkFailureKind::TlsCertificateError);
+        assert!(!is_eligible_for_http_fallback(tls_unknown_ca, false));
+
+        let tls_wrong_host = classify_network_failure_by_reason(
+            "g-tls-certificate-error-quark",
+            3,
+            "Certificate bad identity: hostname mismatch",
+        );
+        assert_eq!(tls_wrong_host, NetworkFailureKind::TlsCertificateError);
+        assert!(!is_eligible_for_http_fallback(tls_wrong_host, false));
+
+        // If is_tls_error flag is true, fallback is ALWAYS blocked
+        assert!(!is_eligible_for_http_fallback(conn_refused, true));
+
+        // 3. User cancellation is NEVER eligible for HTTP fallback
+        let cancelled = classify_network_failure_by_reason(
+            "webkit-network-error-quark",
+            302,
+            "Load request was cancelled",
+        );
+        assert_eq!(cancelled, NetworkFailureKind::Cancelled);
+        assert!(!is_eligible_for_http_fallback(cancelled, false));
     }
 }

@@ -94,6 +94,13 @@ fn test_omnibox_full_integration_suite() {
     *activation_result.borrow_mut() = Some(("rust-lang.org".to_string(), true));
     assert_eq!(*activation_result.borrow(), Some(("rust-lang.org".to_string(), true)));
 
+    // Emulate Ctrl+Enter bare word expansion (Decision 3)
+    let expanded = shadhin_browser::browser::navigation::expand_ctrl_enter("wikipedia");
+    assert_eq!(expanded, "https://www.wikipedia.com");
+    addr.set_text(&expanded);
+    *activation_result.borrow_mut() = Some((expanded.clone(), false));
+    assert_eq!(*activation_result.borrow(), Some(("https://www.wikipedia.com".to_string(), false)));
+
     // 5. Bookmark star synchronization (Rule 29)
     println!("CHECK 5: Bookmark star state synchronization");
     let storage = StorageService::new_in_memory().expect("in-memory db");

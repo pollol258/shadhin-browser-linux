@@ -337,11 +337,12 @@ impl AddressBar {
 
         key_controller.connect_key_pressed(move |_, key, _code, state| {
             let alt = state.contains(ModifierType::ALT_MASK);
+            let ctrl = state.contains(ModifierType::CONTROL_MASK);
 
-            // Alt+Enter or Enter
+            // Enter, Alt+Enter, or Ctrl+Enter
             if key == Key::Return || key == Key::KP_Enter {
                 pop_k.popdown();
-                let text = {
+                let mut text = {
                     let items = items_k.borrow();
                     if let Some(idx) = *sel_idx_k.borrow()
                         && let Some(item) = items.get(idx)
@@ -351,6 +352,17 @@ impl AddressBar {
                         entry_k.text().trim().to_string()
                     }
                 };
+
+                // Ctrl+Enter on bare word expands to https://www.word.com
+                if ctrl && !text.is_empty() {
+                    let expanded = crate::browser::navigation::expand_ctrl_enter(&text);
+                    if expanded != text {
+                        text = expanded;
+                        *is_prog_k.borrow_mut() = true;
+                        entry_k.set_text(&text);
+                        *is_prog_k.borrow_mut() = false;
+                    }
+                }
 
                 if !text.is_empty()
                     && let Some(ref cb) = *on_act_k.borrow()

@@ -384,3 +384,10 @@ progressbar.shadhin-progress progress {
 .shadhin-suggestion-row.selected {
   background-color: @hover_bg;
 }
+
+/* --- Inline HTTP Fallback Bar --- */
+.shadhin-http-fallback-bar {
+  background-color: alpha(@warning, 0.15);
+  border-bottom: 1px solid alpha(@warning, 0.35);
+  padding: 6px 14px;
+}

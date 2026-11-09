@@ -105,6 +105,8 @@ pub struct ShadhinWindow {
     active_network_session: Rc<RefCell<NetworkSession>>,
     nav_ctx: Rc<NavigationContext>,
     persistence_allowed: bool,
+    fallback_bar: gtk4::Box,
+    fallback_target: Rc<RefCell<Option<(TabId, String)>>>,
 }
 
 /// Navigation execution context consolidating cross-component dependencies
@@ -127,6 +129,8 @@ pub struct NavigationContext {
     pub load_line: gtk4::ProgressBar,
     pub sandbox_banner: adw::Banner,
     pub pending_bare_domain_fallbacks: Rc<RefCell<std::collections::HashMap<TabId, String>>>,
+    pub fallback_bar: gtk4::Box,
+    pub fallback_target: Rc<RefCell<Option<(TabId, String)>>>,
 }
 
 /// Updates address bar security shield based on real WebView TLS state
@@ -339,8 +343,40 @@ impl ShadhinWindow {
             .vexpand(true)
             .build();
 
+        // Inline HTTP fallback bar under address bar
+        let fallback_bar = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(12)
+            .css_classes(["shadhin-http-fallback-bar"])
+            .visible(false)
+            .build();
+
+        let fallback_icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+        fallback_icon.set_pixel_size(18);
+        fallback_bar.append(&fallback_icon);
+
+        let fallback_label = gtk4::Label::builder()
+            .label("This site does not support HTTPS. Open it over an insecure connection?")
+            .hexpand(true)
+            .xalign(0.0)
+            .build();
+        fallback_bar.append(&fallback_label);
+
+        let fallback_continue_btn = gtk4::Button::builder()
+            .label("Continue")
+            .css_classes(["destructive-action"])
+            .build();
+        fallback_bar.append(&fallback_continue_btn);
+
+        let fallback_cancel_btn = gtk4::Button::builder()
+            .label("Cancel")
+            .css_classes(["flat"])
+            .build();
+        fallback_bar.append(&fallback_cancel_btn);
+
         root_box.append(toolbar.widget());
         root_box.append(&load_line);
+        root_box.append(&fallback_bar);
         root_box.append(&tab_bar);
         root_box.append(bookmarks_bar.widget());
         root_box.append(find_bar.widget());
@@ -427,6 +463,37 @@ impl ShadhinWindow {
 
         let pending_bare_domain_fallbacks =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
+        let fallback_target: Rc<RefCell<Option<(TabId, String)>>> = Rc::new(RefCell::new(None));
+
+        // Connect Continue and Cancel on HTTP fallback bar
+        let fb_bar_c = fallback_bar.clone();
+        let fb_target_c = fallback_target.clone();
+        let items_fb = tab_items.clone();
+        let tb_c = toolbar.clone();
+        fallback_continue_btn.connect_clicked(move |_| {
+            fb_bar_c.set_visible(false);
+            if let Some((tab_id, http_url)) = fb_target_c.borrow_mut().take() {
+                let items = items_fb.borrow();
+                if let Some(item) = items.get(tab_id)
+                    && let Some(ref wv) = *item.webview.borrow()
+                {
+                    tb_c.address_bar().set_text(&http_url);
+                    tb_c.address_bar().set_security_status(
+                        "channel-insecure-symbolic",
+                        "Not secure: Insecure connection (HTTP)",
+                    );
+                    wv.load_uri(&http_url);
+                }
+            }
+        });
+
+        let fb_bar_cancel = fallback_bar.clone();
+        let fb_target_cancel = fallback_target.clone();
+        fallback_cancel_btn.connect_clicked(move |_| {
+            fb_bar_cancel.set_visible(false);
+            fb_target_cancel.borrow_mut().take();
+        });
+
         let nav_ctx = Rc::new(NavigationContext {
             tab_manager: tab_manager.clone(),
             config: config.clone(),
@@ -445,6 +512,8 @@ impl ShadhinWindow {
             load_line: load_line.clone(),
             sandbox_banner: sandbox_banner.clone(),
             pending_bare_domain_fallbacks,
+            fallback_bar: fallback_bar.clone(),
+            fallback_target: fallback_target.clone(),
         });
 
         // Wire top TabBar '+' new tab button
@@ -546,6 +615,8 @@ impl ShadhinWindow {
             active_network_session,
             nav_ctx,
             persistence_allowed,
+            fallback_bar,
+            fallback_target,
         };
 
         win.setup_signals();
@@ -1231,6 +1302,8 @@ impl NavigationContext {
                         .pending_bare_domain_fallbacks
                         .borrow_mut()
                         .remove(&tab_id);
+                    nav_lc.fallback_bar.set_visible(false);
+                    nav_lc.fallback_target.borrow_mut().take();
                     if let Some(uri) = wv.uri() {
                         let uri_str = uri.as_str();
                         tab.url = uri_str.to_string();
@@ -1526,29 +1599,60 @@ impl NavigationContext {
                 "Connection failed",
             );
 
-            // Check if bare domain HTTPS upgrade failed -> offer HTTP fallback
+            // Check if bare domain HTTPS upgrade failed
+            let error_domain = error.domain().as_str();
+            let error_code = error.code();
+            let error_msg = error.message();
+            let failure_kind = crate::browser::navigation::classify_network_failure_by_reason(
+                error_domain,
+                error_code,
+                error_msg,
+            );
+
             if let Some(fallback_http) = nav_fail
                 .pending_bare_domain_fallbacks
                 .borrow_mut()
                 .remove(&tab_id)
             {
-                let host = extract_host_from_uri(failing_uri).unwrap_or_else(|| failing_uri.to_string());
-                tb_fail.set_is_loading(false);
-                page_fail.set_title("Connection Not Available");
-                let mut tab = tab_c_fail.borrow_mut();
-                tab.is_loading = false;
-                tab.title = "Connection Not Available".to_string();
-                drop(tab);
+                // CRITICAL REQUIREMENT: Fall back only for connection-level failures (refused, timeout, no listener on 443).
+                // NEVER fall back to HTTP after a TLS or certificate error!
+                if crate::browser::navigation::is_eligible_for_http_fallback(failure_kind, false) {
+                    let host = extract_host_from_uri(failing_uri).unwrap_or_else(|| failing_uri.to_string());
+                    let is_private = crate::browser::navigation::is_localhost_or_private_ip(&host);
 
-                ui_fail.https_fallback_url.borrow_mut().replace(fallback_http);
-                ui_fail.https_host_label.set_label(&host);
-                ui_fail.https_desc_label.set_label(
-                    "HTTPS connection failed. Click below to try connecting via insecure HTTP.",
-                );
-                ui_fail.https_continue_btn.set_label("Try HTTP (Not Secure)");
-                ui_fail.https_continue_btn.set_visible(true);
-                ui_fail.stack.set_visible_child_name("https_error");
-                return true;
+                    if is_private {
+                        // Automatic http:// for localhost and private IP addresses
+                        tb_fail.address_bar().set_text(&fallback_http);
+                        tb_fail.address_bar().set_security_status(
+                            "channel-insecure-symbolic",
+                            "Not secure: Insecure connection (HTTP)",
+                        );
+                        wv.load_uri(&fallback_http);
+                        return true;
+                    } else {
+                        // For public domains, do NOT fall back silently.
+                        // Show inline bar under address bar: "This site does not support HTTPS. Open it over an insecure connection?"
+                        // with Continue and Cancel buttons. Cancel keeps the failed https URL in the bar.
+                        nav_fail.fallback_target.borrow_mut().replace((tab_id, fallback_http));
+                        nav_fail.fallback_bar.set_visible(true);
+
+                        tb_fail.set_is_loading(false);
+                        page_fail.set_title("Connection Not Available");
+                        let mut tab = tab_c_fail.borrow_mut();
+                        tab.is_loading = false;
+                        tab.title = "Connection Not Available".to_string();
+                        drop(tab);
+
+                        ui_fail
+                            .error_label
+                            .set_label(&format!("Could not connect via HTTPS to:\n{failing_uri}\n\n{error}"));
+                        ui_fail.stack.set_visible_child_name("error");
+                        return true;
+                    }
+                } else {
+                    nav_fail.fallback_bar.set_visible(false);
+                    nav_fail.fallback_target.borrow_mut().take();
+                }
             }
 
             let tab_url = tab_c_fail.borrow().url.clone();
@@ -1628,9 +1732,16 @@ impl NavigationContext {
         let page_tls = page.clone();
         let tab_c_tls = tab_c.clone();
         let tb_tls = self.toolbar.clone();
+        let nav_tls = self.clone();
 
         webview.connect_load_failed_with_tls_errors(move |wv, failing_uri, cert, errors| {
             crate::utils::net_diagnostics::record_tls_failure(failing_uri, errors);
+
+            // CRITICAL REQUIREMENT: NEVER fall back to HTTP after a TLS or certificate error
+            // (expired, unknown CA, wrong host, revoked, and so on). Show certificate warning page only!
+            nav_tls.pending_bare_domain_fallbacks.borrow_mut().remove(&tab_id);
+            nav_tls.fallback_bar.set_visible(false);
+            nav_tls.fallback_target.borrow_mut().take();
 
             tb_tls.set_is_loading(false);
             tb_tls.address_bar().set_text_if_unfocused(failing_uri);
@@ -2263,6 +2374,8 @@ impl ShadhinWindow {
         let fb_change = self.find_bar.clone();
         let items_change = self.tab_items.clone();
         let nav_change = self.nav_ctx.clone();
+        let fb_bar_change = self.fallback_bar.clone();
+        let fb_target_change = self.fallback_target.clone();
 
         self.tab_view.connect_selected_page_notify(move |tv| {
             if let Some(page) = tv.selected_page() {
@@ -2311,6 +2424,14 @@ impl ShadhinWindow {
                 Self::sync_tabs_external(
                     &tm_change, &ts_change, &sb_change, &tv_change, &tb_change,
                 );
+
+                // Sync HTTP fallback bar visibility for this tab
+                if let Some(target) = fb_target_change.borrow().as_ref() {
+                    let is_active_tab = target.0 == idx;
+                    fb_bar_change.set_visible(is_active_tab);
+                } else {
+                    fb_bar_change.set_visible(false);
+                }
 
                 // Attach FindBar to newly selected tab webview
                 let items = items_change.borrow();
@@ -3375,6 +3496,11 @@ impl ShadhinWindow {
     /// Accessor to the load progress line
     pub fn load_line(&self) -> &gtk4::ProgressBar {
         &self.load_line
+    }
+
+    /// Accessor to the inline HTTP fallback bar
+    pub fn fallback_bar(&self) -> &gtk4::Box {
+        &self.fallback_bar
     }
 
     /// Accessor to the sandbox status banner

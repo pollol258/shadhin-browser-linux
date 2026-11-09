@@ -1,19 +1,23 @@
 //! Live network and security test targets verification for Shadhin Browser Omnibox
 //!
 //! Evaluates the address bar and WebKitGTK 6.0 behavior against:
-//! 1. https://example.com (Valid TLS HTTPS)
-//! 2. http://example.com (Insecure HTTP)
+//! 1. http://localhost:8000 (Local HTTP service)
+//! 2. Non-existent domain (DNS resolution failure)
 //! 3. https://expired.badssl.com (TLS Certificate Expired)
 //! 4. https://self-signed.badssl.com (TLS Self-Signed / Unknown CA)
 //! 5. https://wrong.host.badssl.com (TLS Hostname Mismatch / Bad Identity)
-//! 6. http://localhost:8000 (Local HTTP service)
-//! 7. Mixed-content test page
-//! 8. Non-existent domain (DNS resolution failure)
+//! 6. https://example.com (Valid TLS HTTPS)
+//! 7. http://example.com (Insecure HTTP)
+//! 8. Mixed-content test page
 //! 9. Unreachable IP (Network connection failure)
+//! 10. HTTP Fallback Isolation: Certificate error never reaches fallback, while connection-refused triggers fallback
 
 use adw::prelude::*;
 use gtk4::gio;
 use gtk4::glib;
+use shadhin_browser::browser::navigation::{
+    classify_network_failure_by_reason, is_eligible_for_http_fallback, NetworkFailureKind,
+};
 use shadhin_browser::ui::toolbar::ShadhinToolbar;
 use shadhin_browser::ui::window::update_security_indicator_from_webview;
 use std::cell::RefCell;
@@ -109,7 +113,7 @@ fn test_live_security_and_network_targets() {
     l_err.run();
     assert!(*err_fired.borrow(), "Load failed signal must fire for non-existent domain");
 
-    // TARGET 3: BadSSL Expired Certificate (Rule 18, 19)
+    // TARGET 3: BadSSL Expired Certificate (Rule 18, 19, Decision 5)
     println!("\n--- TARGET 3: https://expired.badssl.com (Expired Certificate) ---");
     let wv_exp = WebView::builder().network_session(&session).build();
     let l_exp = glib::MainLoop::new(None, false);
@@ -125,9 +129,16 @@ fn test_live_security_and_network_targets() {
             errors.contains(gio::TlsCertificateFlags::EXPIRED),
             "Must report EXPIRED certificate flag"
         );
+        // Verify TLS error is NEVER eligible for HTTP fallback
+        let kind = classify_network_failure_by_reason("g-tls-error-quark", 1, "Certificate expired");
+        assert_eq!(kind, NetworkFailureKind::TlsCertificateError);
+        assert!(
+            !is_eligible_for_http_fallback(kind, true),
+            "Expired certificate must NEVER reach HTTP fallback"
+        );
         *tls_exp_c.borrow_mut() = true;
         l_exp_c.quit();
-        true // Handled: prevent silent load
+        true // Handled: prevent silent load and prevent HTTP fallback
     });
     let l_exp_to = l_exp.clone();
     glib::timeout_add_local_once(Duration::from_secs(8), move || l_exp_to.quit());
@@ -135,7 +146,7 @@ fn test_live_security_and_network_targets() {
     l_exp.run();
     assert!(*tls_exp_fired.borrow(), "TLS error callback must fire for expired cert");
 
-    // TARGET 4: BadSSL Self-Signed Certificate (Rule 18, 19)
+    // TARGET 4: BadSSL Self-Signed Certificate (Rule 18, 19, Decision 5)
     println!("\n--- TARGET 4: https://self-signed.badssl.com (Self-Signed / Untrusted CA) ---");
     let wv_self = WebView::builder().network_session(&session).build();
     let l_self = glib::MainLoop::new(None, false);
@@ -150,6 +161,13 @@ fn test_live_security_and_network_targets() {
             errors.contains(gio::TlsCertificateFlags::UNKNOWN_CA),
             "Must report UNKNOWN_CA certificate flag"
         );
+        // Verify UNKNOWN_CA is NEVER eligible for HTTP fallback
+        let kind = classify_network_failure_by_reason("g-tls-certificate-error-quark", 2, "Unknown CA");
+        assert_eq!(kind, NetworkFailureKind::TlsCertificateError);
+        assert!(
+            !is_eligible_for_http_fallback(kind, true),
+            "Self-signed certificate must NEVER reach HTTP fallback"
+        );
         *tls_self_c.borrow_mut() = true;
         l_self_c.quit();
         true
@@ -160,7 +178,7 @@ fn test_live_security_and_network_targets() {
     l_self.run();
     assert!(*tls_self_fired.borrow(), "TLS error callback must fire for self-signed cert");
 
-    // TARGET 5: BadSSL Wrong Host (Rule 18, 19)
+    // TARGET 5: BadSSL Wrong Host (Rule 18, 19, Decision 5)
     println!("\n--- TARGET 5: https://wrong.host.badssl.com (Hostname Mismatch) ---");
     let wv_wrong = WebView::builder().network_session(&session).build();
     let l_wrong = glib::MainLoop::new(None, false);
@@ -174,6 +192,13 @@ fn test_live_security_and_network_targets() {
         assert!(
             errors.contains(gio::TlsCertificateFlags::BAD_IDENTITY),
             "Must report BAD_IDENTITY certificate flag"
+        );
+        // Verify BAD_IDENTITY is NEVER eligible for HTTP fallback
+        let kind = classify_network_failure_by_reason("g-tls-certificate-error-quark", 3, "Bad identity");
+        assert_eq!(kind, NetworkFailureKind::TlsCertificateError);
+        assert!(
+            !is_eligible_for_http_fallback(kind, true),
+            "Hostname mismatch must NEVER reach HTTP fallback"
         );
         *tls_wrong_c.borrow_mut() = true;
         l_wrong_c.quit();
@@ -259,7 +284,6 @@ fn test_live_security_and_network_targets() {
             thread::sleep(Duration::from_millis(5));
         }
     });
-    // On mixed content or insecure scheme, update_security_indicator_from_webview marks it insecure
     update_security_indicator_from_webview(&toolbar, &wv1, &format!("http://127.0.0.1:{m_port}/page"));
     m_stop.store(true, Ordering::SeqCst);
     println!("  [OK] Insecure/mixed content correctly marked neutral/insecure, never lock.");
@@ -283,7 +307,25 @@ fn test_live_security_and_network_targets() {
     l_unreach.run();
     assert!(*unreach_fired.borrow(), "Network unreachable error must fire load_failed");
 
+    // TARGET 10: Connection Refused Failure triggers HTTP Fallback eligibility (Decision 5)
+    println!("\n--- TARGET 10: Connection refused on HTTPS port 44344 triggers HTTP Fallback ---");
+    let conn_fail_kind = classify_network_failure_by_reason(
+        "soup-error-quark",
+        4,
+        "Cannot connect to 127.0.0.1:44344: Connection refused",
+    );
+    assert_eq!(
+        conn_fail_kind,
+        NetworkFailureKind::ConnectionRefusedOrTimedOut,
+        "Connection refused must be classified as ConnectionRefusedOrTimedOut"
+    );
+    assert!(
+        is_eligible_for_http_fallback(conn_fail_kind, false),
+        "Connection-level failure without TLS errors is eligible for HTTP fallback bar"
+    );
+    println!("  [OK] Connection refused correctly qualified for HTTP fallback prompt.");
+
     println!("\n======================================================================");
-    println!("ALL 9 REAL LIVE NETWORK AND SECURITY TARGETS PASSED VERIFICATION!");
+    println!("ALL REAL LIVE NETWORK, BADSSL SECURITY, AND FALLBACK TARGETS PASSED!");
     println!("======================================================================\n");
 }
