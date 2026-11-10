@@ -85,9 +85,18 @@ fn test_omnibox_full_integration_suite() {
         *act_clone.borrow_mut() = Some((url.to_string(), new_tab));
     });
 
+    // Test real GtkEntry emit_activate signal (what happens when user presses Enter in GtkEntry)
+    addr.set_text("youtube.com");
+    addr.entry().emit_activate();
+    assert_eq!(
+        *activation_result.borrow(),
+        Some(("youtube.com".to_string(), false)),
+        "GtkEntry emit_activate must trigger connect_activate callback"
+    );
+
     // Emulate normal Enter
     addr.set_text("rust-lang.org");
-    *activation_result.borrow_mut() = Some(("rust-lang.org".to_string(), false));
+    addr.entry().emit_activate();
     assert_eq!(*activation_result.borrow(), Some(("rust-lang.org".to_string(), false)));
 
     // Emulate Alt+Enter

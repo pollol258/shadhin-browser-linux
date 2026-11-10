@@ -342,6 +342,7 @@ impl AddressBar {
 
         // 1. Key controller for Enter, Alt+Enter, Escape, and Up/Down suggestion selection
         let key_controller = gtk4::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
         let entry_k = entry.clone();
         let pop_k = popover.clone();
         let is_prog_k = is_prog.clone();
@@ -356,7 +357,7 @@ impl AddressBar {
             let ctrl = state.contains(ModifierType::CONTROL_MASK);
 
             // Enter, Alt+Enter, or Ctrl+Enter
-            if key == Key::Return || key == Key::KP_Enter {
+            if key == Key::Return || key == Key::KP_Enter || key == Key::ISO_Enter {
                 pop_k.popdown();
                 let mut text = {
                     let items = items_k.borrow();
@@ -380,10 +381,13 @@ impl AddressBar {
                     }
                 }
 
-                if !text.is_empty()
-                    && let Some(ref cb) = *on_act_k.borrow()
-                {
-                    cb(&text, alt);
+                tracing::info!("AddressBar: Key::Return captured in Capture phase: '{text}' (alt={alt})");
+                if !text.is_empty() {
+                    if let Some(ref cb) = *on_act_k.borrow() {
+                        cb(&text, alt);
+                    } else {
+                        tracing::warn!("AddressBar: on_activate callback is None!");
+                    }
                 }
                 return glib::Propagation::Stop;
             }
@@ -493,6 +497,33 @@ impl AddressBar {
             glib::Propagation::Proceed
         });
         self.entry.add_controller(key_controller);
+
+        // Direct GtkEntry activate signal connection as canonical submit fallback
+        let on_act_native = on_act.clone();
+        let items_native = items_cell.clone();
+        let sel_native = sel_idx_cell.clone();
+        let pop_native = popover.clone();
+        self.entry.connect_activate(move |entry| {
+            pop_native.popdown();
+            let text = {
+                let items = items_native.borrow();
+                if let Some(idx) = *sel_native.borrow()
+                    && let Some(item) = items.get(idx)
+                {
+                    item.url.clone()
+                } else {
+                    entry.text().trim().to_string()
+                }
+            };
+            tracing::info!("AddressBar: GtkEntry 'activate' signal triggered: '{text}'");
+            if !text.is_empty() {
+                if let Some(ref cb) = *on_act_native.borrow() {
+                    cb(&text, false);
+                } else {
+                    tracing::warn!("AddressBar: activate signal received but on_activate callback is None!");
+                }
+            }
+        });
 
         // 2. Click behavior: first click selects all, subsequent clicks place cursor
         let gesture_click = gtk4::GestureClick::new();

@@ -1287,6 +1287,7 @@ impl NavigationContext {
             );
             return webview;
         };
+        webview.set_visible(true);
         ui_item.stack.add_named(&webview, Some("web"));
         *ui_item.webview.borrow_mut() = Some(webview.clone());
         let storage_lc = ui_item.storage.clone();
@@ -2241,6 +2242,8 @@ impl NavigationContext {
                     }
 
                     item.stack.set_visible_child_name("web");
+                    info!("Loading URI on active tab {tab_idx}: {clean_url}");
+                    wv.set_visible(true);
                     wv.load_uri(&clean_url);
                 }
 
@@ -2752,11 +2755,26 @@ impl ShadhinWindow {
         let nav_addr = self.nav_ctx.clone();
         let tv_addr = self.tab_view.clone();
         let cfg_addr = self.config.clone();
+        let last_sub = Rc::new(RefCell::new((
+            String::new(),
+            std::time::Instant::now() - std::time::Duration::from_secs(10),
+        )));
 
         self.toolbar.address_bar().connect_activate(move |input, new_tab| {
-            if new_tab {
+            let now = std::time::Instant::now();
+            let mut last = last_sub.borrow_mut();
+            if last.0 == input && now.duration_since(last.1) < std::time::Duration::from_millis(300) {
+                tracing::info!("Ignoring duplicate address bar activation within 300ms for '{input}'");
+                return;
+            }
+            *last = (input.to_string(), now);
+            drop(last);
+
+            info!("Address bar submission received: input='{input}', new_tab={new_tab}");
+            if new_tab || tv_addr.n_pages() == 0 {
                 nav_addr.create_tab(Some(input), None);
-            } else if let Some(page) = tv_addr.selected_page() {
+            } else {
+                let page = tv_addr.selected_page().unwrap_or_else(|| tv_addr.nth_page(0));
                 let idx = tv_addr.page_position(&page) as usize;
                 let is_dev = std::env::var("SHADHIN_DEV").is_ok()
                     || std::env::var("SHADHIN_DEV_CSS").is_ok();
@@ -2766,6 +2784,7 @@ impl ShadhinWindow {
                     developer_extras: is_dev,
                 };
                 let target = classify_input(input, &settings);
+                info!("Classified input '{input}' as target: {target:?}, navigating tab {idx}");
                 nav_addr.execute_navigation(idx, &target, &page);
             }
         });
