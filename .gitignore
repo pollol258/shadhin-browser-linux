@@ -1,3 +1,16 @@
-/target
+# Build target
+/target/
+target/
+
+# Backup and temporary editor files
 **/*.rs.bk
-Cargo.lock
+*.swp
+*.swo
+*~
+
+# Generated packaging artifacts
+debian/
+*.deb
+*.rpm
+*.tar.gz
+*.tar.xz
