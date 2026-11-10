@@ -454,13 +454,49 @@ impl ShadhinWindow {
         window.set_content(Some(&toast_overlay));
 
         let toast_ov = toast_overlay.clone();
+        let win_for_dl = window.clone();
         download_mgr.add_completion_listener(move |item| {
             let toast = adw::Toast::new(&format!("Download completed: {}", item.file_name));
             toast.set_button_label(Some("Open"));
             let file_path = item.file_path.clone();
+            let file_name = item.file_name.clone();
+            let win_click = win_for_dl.clone();
             toast.connect_button_clicked(move |_| {
-                let uri = format!("file://{}", file_path.display());
-                let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+                use std::os::unix::fs::PermissionsExt;
+                let is_exec = if let Ok(meta) = std::fs::metadata(&file_path) {
+                    (meta.permissions().mode() & 0o111) != 0
+                        || crate::browser::downloads::is_dangerous_extension(&file_name)
+                } else {
+                    crate::browser::downloads::is_dangerous_extension(&file_name)
+                };
+
+                if is_exec {
+                    let alert = adw::AlertDialog::builder()
+                        .heading("Open Executable File?")
+                        .body(format!(
+                            "\"{file_name}\" is an executable file or script. Opening it could allow code to execute on your computer. Are you sure you want to open it?"
+                        ))
+                        .build();
+                    alert.add_response("cancel", "Cancel");
+                    alert.add_response("open", "Open Anyway");
+                    alert.set_default_response(Some("cancel"));
+                    alert.set_close_response("cancel");
+                    alert.set_response_appearance("open", adw::ResponseAppearance::Destructive);
+                    let fp_confirmed = file_path.clone();
+                    alert.connect_response(None, move |_, resp| {
+                        if resp == "open" {
+                            let uri = format!("file://{}", fp_confirmed.display());
+                            let _ = gio::AppInfo::launch_default_for_uri(
+                                &uri,
+                                None::<&gio::AppLaunchContext>,
+                            );
+                        }
+                    });
+                    alert.present(Some(&win_click));
+                } else {
+                    let uri = format!("file://{}", file_path.display());
+                    let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+                }
             });
             toast_ov.add_toast(toast);
         });

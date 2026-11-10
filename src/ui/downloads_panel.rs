@@ -5,6 +5,7 @@ use crate::storage::StorageService;
 use crate::storage::downloads::{DownloadRecord, DownloadRepository};
 use gtk4::gio;
 use gtk4::prelude::*;
+use adw::prelude::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -391,11 +392,20 @@ impl DownloadsPanel {
             .build();
         top_row.append(&name_lbl);
 
-        if item.is_dangerous {
+        use std::os::unix::fs::PermissionsExt;
+        let is_executable = if let Ok(meta) = std::fs::metadata(&item.file_path) {
+            (meta.permissions().mode() & 0o111) != 0
+                || item.is_dangerous
+                || crate::browser::downloads::is_dangerous_extension(&item.file_name)
+        } else {
+            item.is_dangerous || crate::browser::downloads::is_dangerous_extension(&item.file_name)
+        };
+
+        if is_executable {
             let badge = gtk4::Label::builder()
                 .label("⚠️ Executable")
                 .css_classes(["warning", "caption", "shadhin-warning-badge"])
-                .tooltip_text("This file type is potentially hazardous. Exercise caution.")
+                .tooltip_text("This file has executable permissions or a runnable format. Exercise caution.")
                 .build();
             top_row.append(&badge);
         }
@@ -410,10 +420,43 @@ impl DownloadsPanel {
             .tooltip_text("Open file with system default application")
             .build();
         let item_open = item_data.clone();
+        let card_root = card.clone();
+        let is_exec_open = is_executable;
         open_btn.connect_clicked(move |_| {
-            let p = item_open.borrow().file_path.clone();
-            let uri = format!("file://{}", p.display());
-            let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+            let item_snap = item_open.borrow().clone();
+            let p = item_snap.file_path.clone();
+            if is_exec_open {
+                let alert = adw::AlertDialog::builder()
+                    .heading("Open Executable File?")
+                    .body(format!(
+                        "\"{}\" is an executable file or script. Opening it could allow code to execute on your computer. Are you sure you want to open it?",
+                        item_snap.file_name
+                    ))
+                    .build();
+                alert.add_response("cancel", "Cancel");
+                alert.add_response("open", "Open Anyway");
+                alert.set_default_response(Some("cancel"));
+                alert.set_close_response("cancel");
+                alert.set_response_appearance("open", adw::ResponseAppearance::Destructive);
+                let fp_confirmed = p.clone();
+                alert.connect_response(None, move |_, resp| {
+                    if resp == "open" {
+                        let uri = format!("file://{}", fp_confirmed.display());
+                        let _ = gio::AppInfo::launch_default_for_uri(
+                            &uri,
+                            None::<&gio::AppLaunchContext>,
+                        );
+                    }
+                });
+                if let Some(root) = card_root.root()
+                    && let Some(win) = root.downcast_ref::<gtk4::Window>()
+                {
+                    alert.present(Some(win));
+                }
+            } else {
+                let uri = format!("file://{}", p.display());
+                let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+            }
         });
         top_row.append(&open_btn);
 

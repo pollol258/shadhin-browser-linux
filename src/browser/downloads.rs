@@ -246,6 +246,8 @@ struct ActiveDownloadEntry {
     webkit_download: Option<webkit6::Download>,
     last_ui_update: Instant,
     last_db_update: Instant,
+    last_speed_sample_time: Instant,
+    last_speed_sample_bytes: i64,
     cancelled_by_user: bool,
     persistence_allowed: bool,
 }
@@ -340,6 +342,8 @@ impl DownloadManager {
             webkit_download: Some(download.clone()),
             last_ui_update: Instant::now(),
             last_db_update: Instant::now(),
+            last_speed_sample_time: Instant::now(),
+            last_speed_sample_bytes: 0,
             cancelled_by_user: false,
             persistence_allowed,
         };
@@ -511,16 +515,30 @@ impl DownloadManager {
                 entry.item.received_bytes = received;
                 entry.item.progress = progress;
 
-                if elapsed > 0.1 {
-                    let speed = received as f64 / elapsed;
-                    entry.item.speed_bytes_per_sec = speed;
-
-                    if entry.item.total_bytes > received && speed > 0.0 {
-                        let remaining = (entry.item.total_bytes - received) as f64 / speed;
-                        entry.item.estimated_remaining_secs = Some(remaining as u64);
+                let delta_t = now.duration_since(entry.last_speed_sample_time).as_secs_f64();
+                if delta_t >= 0.25 {
+                    let delta_bytes = (received - entry.last_speed_sample_bytes).max(0);
+                    let instant_speed = delta_bytes as f64 / delta_t;
+                    let smoothed_speed = if entry.item.speed_bytes_per_sec > 0.0 {
+                        0.7 * entry.item.speed_bytes_per_sec + 0.3 * instant_speed
                     } else {
-                        entry.item.estimated_remaining_secs = None;
-                    }
+                        instant_speed
+                    };
+                    entry.item.speed_bytes_per_sec = smoothed_speed;
+                    entry.last_speed_sample_time = now;
+                    entry.last_speed_sample_bytes = received;
+                } else if elapsed > 0.1 && entry.item.speed_bytes_per_sec <= 0.0 {
+                    entry.item.speed_bytes_per_sec = received as f64 / elapsed;
+                }
+
+                if entry.item.total_bytes > received && entry.item.speed_bytes_per_sec > 1.0 {
+                    let remaining = (entry.item.total_bytes - received) as f64
+                        / entry.item.speed_bytes_per_sec;
+                    entry.item.estimated_remaining_secs = Some(remaining.round() as u64);
+                } else if entry.item.total_bytes > 0 && entry.item.total_bytes <= received {
+                    entry.item.estimated_remaining_secs = Some(0);
+                } else {
+                    entry.item.estimated_remaining_secs = None;
                 }
 
                 if now.duration_since(entry.last_ui_update) >= Duration::from_millis(100) {

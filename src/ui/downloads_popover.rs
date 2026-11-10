@@ -8,6 +8,7 @@ use crate::storage::StorageService;
 use crate::storage::downloads::{DownloadRecord, DownloadRepository};
 use gtk4::gio;
 use gtk4::prelude::*;
+use adw::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -37,7 +38,10 @@ fn format_speed(bps: f64) -> String {
     }
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
-    if bps >= MB {
+    const GB: f64 = MB * 1024.0;
+    if bps >= GB {
+        format!("{:.2} GB/s", bps / GB)
+    } else if bps >= MB {
         format!("{:.1} MB/s", bps / MB)
     } else if bps >= KB {
         format!("{:.0} KB/s", bps / KB)
@@ -305,15 +309,34 @@ impl DownloadsPopover {
         let status_text = match item.status {
             DownloadStatus::Downloading | DownloadStatus::Pending => {
                 let done = format_bytes(item.received_bytes);
-                let total = format_bytes(item.total_bytes);
-                let speed = format_speed(item.speed_bytes_per_sec);
-                let eta = item
-                    .estimated_remaining_secs
-                    .map(format_eta)
-                    .unwrap_or_default();
-                format!("{done} of {total} · {speed} {eta}")
+                let mut parts = Vec::new();
+                if item.total_bytes > 0 {
+                    let total = format_bytes(item.total_bytes);
+                    parts.push(format!("{done} of {total}"));
+                } else {
+                    parts.push(done);
+                }
+
+                if item.speed_bytes_per_sec > 0.0 {
+                    parts.push(format_speed(item.speed_bytes_per_sec));
+                }
+
+                if let Some(eta_secs) = item.estimated_remaining_secs {
+                    parts.push(format_eta(eta_secs));
+                }
+
+                parts.join(" · ")
             }
-            DownloadStatus::Completed => "Finished".to_string(),
+            DownloadStatus::Completed => {
+                let size = if item.total_bytes > 0 {
+                    format!(" · {}", format_bytes(item.total_bytes))
+                } else if item.received_bytes > 0 {
+                    format!(" · {}", format_bytes(item.received_bytes))
+                } else {
+                    String::new()
+                };
+                format!("Finished{size}")
+            }
             DownloadStatus::Cancelled => "Cancelled".to_string(),
             DownloadStatus::Interrupted => "Interrupted (Connection lost)".to_string(),
             DownloadStatus::Failed => {
@@ -328,6 +351,35 @@ impl DownloadsPopover {
             .css_classes(["dim-label", "font-xs"])
             .build();
         content_box.append(&status_lbl);
+
+        use std::os::unix::fs::PermissionsExt;
+        let is_executable = if let Ok(meta) = std::fs::metadata(&item.file_path) {
+            (meta.permissions().mode() & 0o111) != 0
+                || crate::browser::downloads::is_dangerous_extension(&item.file_name)
+        } else {
+            crate::browser::downloads::is_dangerous_extension(&item.file_name)
+        };
+
+        if is_executable && item.status == DownloadStatus::Completed {
+            let warn_box = gtk4::Box::builder()
+                .orientation(gtk4::Orientation::Horizontal)
+                .spacing(4)
+                .margin_top(2)
+                .build();
+            let warn_icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+            warn_icon.set_pixel_size(14);
+            warn_icon.add_css_class("warning");
+            let warn_label = gtk4::Label::builder()
+                .label("Executable file — caution advised")
+                .tooltip_text(
+                    "This file has executable permissions or a runnable format. Exercise caution before opening.",
+                )
+                .css_classes(["font-xs", "dim-label"])
+                .build();
+            warn_box.append(&warn_icon);
+            warn_box.append(&warn_label);
+            content_box.append(&warn_box);
+        }
 
         if matches!(item.status, DownloadStatus::Downloading | DownloadStatus::Pending) {
             let pbar = gtk4::ProgressBar::builder()
@@ -361,14 +413,50 @@ impl DownloadsPopover {
             }
             DownloadStatus::Completed => {
                 let file_path = item.file_path.clone();
+                let file_name = item.file_name.clone();
                 let open_btn = gtk4::Button::builder()
                     .label("Open")
                     .css_classes(["flat", "font-xs"])
                     .build();
                 let fp_open = file_path.clone();
+                let fn_open = file_name;
+                let is_exec_click = is_executable;
+                let pop_root = self.popover.clone();
                 open_btn.connect_clicked(move |_| {
-                    let uri = format!("file://{}", fp_open.display());
-                    let _ = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+                    if is_exec_click {
+                        let alert = adw::AlertDialog::builder()
+                            .heading("Open Executable File?")
+                            .body(format!(
+                                "\"{fn_open}\" is an executable file or script. Opening it could allow code to execute on your computer. Are you sure you want to open it?"
+                            ))
+                            .build();
+                        alert.add_response("cancel", "Cancel");
+                        alert.add_response("open", "Open Anyway");
+                        alert.set_default_response(Some("cancel"));
+                        alert.set_close_response("cancel");
+                        alert.set_response_appearance("open", adw::ResponseAppearance::Destructive);
+                        let fp_confirmed = fp_open.clone();
+                        alert.connect_response(None, move |_, resp| {
+                            if resp == "open" {
+                                let uri = format!("file://{}", fp_confirmed.display());
+                                let _ = gio::AppInfo::launch_default_for_uri(
+                                    &uri,
+                                    None::<&gio::AppLaunchContext>,
+                                );
+                            }
+                        });
+                        if let Some(root) = pop_root.root()
+                            && let Some(win) = root.downcast_ref::<gtk4::Window>()
+                        {
+                            alert.present(Some(win));
+                        }
+                    } else {
+                        let uri = format!("file://{}", fp_open.display());
+                        let _ = gio::AppInfo::launch_default_for_uri(
+                            &uri,
+                            None::<&gio::AppLaunchContext>,
+                        );
+                    }
                 });
                 actions.append(&open_btn);
 
@@ -507,5 +595,39 @@ impl DownloadsPopover {
     /// Returns the underlying GtkPopover
     pub fn popover(&self) -> &gtk4::Popover {
         &self.popover
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024 * 2), "2.00 GB");
+    }
+
+    #[test]
+    fn test_format_speed() {
+        assert_eq!(format_speed(0.0), "");
+        assert_eq!(format_speed(-5.0), "");
+        assert_eq!(format_speed(500.0), "500 B/s");
+        assert_eq!(format_speed(2048.0), "2 KB/s");
+        assert_eq!(format_speed(2.5 * 1024.0 * 1024.0), "2.5 MB/s");
+        assert_eq!(format_speed(1.2 * 1024.0 * 1024.0 * 1024.0), "1.20 GB/s");
+    }
+
+    #[test]
+    fn test_format_eta() {
+        assert_eq!(format_eta(0), "0s left");
+        assert_eq!(format_eta(45), "45s left");
+        assert_eq!(format_eta(60), "1m 0s left");
+        assert_eq!(format_eta(125), "2m 5s left");
+        assert_eq!(format_eta(3600), "1h 0m left");
+        assert_eq!(format_eta(3665), "1h 1m left");
     }
 }
