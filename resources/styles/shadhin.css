@@ -96,14 +96,16 @@ entry:focus {
 
 /* Compact circular icon buttons inside address pill (28x28px) */
 .address-pill button.iconbtn {
-  min-width: 28px;
-  min-height: 28px;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
+  margin: 0;
   border-radius: 999px;
   border: none;
   background: transparent;
   color: @muted_text;
-  transition: background-color 150ms ease, color 150ms ease;
+  box-shadow: none;
+  filter: none;
 }
 
 .address-pill button.iconbtn:hover {
@@ -116,33 +118,82 @@ entry:focus {
   background-color: @hover_bg;
 }
 
+.address-pill button.iconbtn:disabled {
+  color: @muted_text;
+  opacity: 1;
+  box-shadow: none;
+  filter: none;
+}
+
+.address-pill button.iconbtn image {
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  filter: none;
+  opacity: 1;
+  -gtk-icon-shadow: none;
+  -gtk-icon-transform: none;
+}
+
 /* --- Navigation & Icon Buttons (32x32px, radius 8px, 16px icon) --- */
 button.iconbtn,
+button.nav-btn,
+button.shadhin-nav-btn,
+button.sidebar-toggle,
 .iconbtn > button {
-  min-width: 32px;
-  min-height: 32px;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
+  margin: 0;
   border-radius: 8px;
   border: none;
   background: transparent;
   color: @text_color;
-  transition: background-color 180ms ease;
+  box-shadow: none;
+  filter: none;
+  outline: none;
 }
 
 button.iconbtn:hover,
+button.nav-btn:hover,
+button.shadhin-nav-btn:hover,
+button.sidebar-toggle:hover,
 .iconbtn > button:hover {
   background-color: @hover_bg;
 }
 
 button.iconbtn.active,
+button.nav-btn.active,
+button.shadhin-nav-btn.active,
+button.sidebar-toggle.active,
 .iconbtn > button.active {
   color: @accent_bg;
   background-color: @hover_bg;
 }
 
 button.iconbtn:disabled,
+button.nav-btn:disabled,
+button.shadhin-nav-btn:disabled,
+button.sidebar-toggle:disabled,
 .iconbtn > button:disabled {
-  opacity: 0.4;
+  color: @muted_text;
+  opacity: 1;
+  box-shadow: none;
+  filter: none;
+}
+
+/* Ensure child images inside icon/nav buttons are crisp, centered, and have no offscreen effects */
+button.iconbtn image,
+button.nav-btn image,
+button.shadhin-nav-btn image,
+button.sidebar-toggle image {
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  filter: none;
+  opacity: 1;
+  -gtk-icon-shadow: none;
+  -gtk-icon-transform: none;
 }
 
 /* --- Standard Buttons (34px, radius 8px, padding 7px 13px) --- */

@@ -45,12 +45,14 @@ impl ShadhinToolbar {
             .visible(true)
             .build();
 
-        let sidebar_icon = gtk4::Image::from_icon_name("view-sidebar-symbolic");
+        let sidebar_icon = gtk4::Image::from_icon_name("sidebar-show-symbolic");
         sidebar_icon.set_pixel_size(16);
+        sidebar_icon.set_halign(gtk4::Align::Center);
+        sidebar_icon.set_valign(gtk4::Align::Center);
         let sidebar_toggle_btn = gtk4::Button::builder()
             .child(&sidebar_icon)
             .tooltip_text("Toggle tab sidebar")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
+            .css_classes(["iconbtn", "nav-btn", "shadhin-nav-btn", "sidebar-toggle", "flat"])
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
@@ -59,10 +61,12 @@ impl ShadhinToolbar {
 
         let back_icon = gtk4::Image::from_icon_name("go-previous-symbolic");
         back_icon.set_pixel_size(16);
+        back_icon.set_halign(gtk4::Align::Center);
+        back_icon.set_valign(gtk4::Align::Center);
         let back_btn = gtk4::Button::builder()
             .child(&back_icon)
             .tooltip_text("Go back (Alt+Left)")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
+            .css_classes(["iconbtn", "nav-btn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .sensitive(false)
             .visible(true)
@@ -72,10 +76,12 @@ impl ShadhinToolbar {
 
         let forward_icon = gtk4::Image::from_icon_name("go-next-symbolic");
         forward_icon.set_pixel_size(16);
+        forward_icon.set_halign(gtk4::Align::Center);
+        forward_icon.set_valign(gtk4::Align::Center);
         let forward_btn = gtk4::Button::builder()
             .child(&forward_icon)
             .tooltip_text("Go forward (Alt+Right)")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
+            .css_classes(["iconbtn", "nav-btn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .sensitive(false)
             .visible(true)
@@ -117,10 +123,12 @@ impl ShadhinToolbar {
         // Downloads button with badge overlay
         let dl_icon = gtk4::Image::from_icon_name("folder-download-symbolic");
         dl_icon.set_pixel_size(16);
+        dl_icon.set_halign(gtk4::Align::Center);
+        dl_icon.set_valign(gtk4::Align::Center);
         let download_btn = gtk4::Button::builder()
             .child(&dl_icon)
             .tooltip_text("Downloads (Ctrl+J)")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
+            .css_classes(["iconbtn", "nav-btn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .build();
         download_btn.set_size_request(32, 32);
@@ -138,10 +146,14 @@ impl ShadhinToolbar {
         right_box.append(&dl_overlay);
 
         // Main Menu button
+        let menu_icon = gtk4::Image::from_icon_name("open-menu-symbolic");
+        menu_icon.set_pixel_size(16);
+        menu_icon.set_halign(gtk4::Align::Center);
+        menu_icon.set_valign(gtk4::Align::Center);
         let menu_btn = gtk4::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
+            .child(&menu_icon)
             .tooltip_text("Main menu")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
+            .css_classes(["iconbtn", "nav-btn", "shadhin-nav-btn", "flat"])
             .always_show_arrow(false)
             .valign(gtk4::Align::Center)
             .build();
