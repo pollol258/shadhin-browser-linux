@@ -70,6 +70,8 @@ impl AddressBar {
 
         let shield_icon = gtk4::Image::from_icon_name("security-low-symbolic");
         shield_icon.set_pixel_size(16);
+        shield_icon.set_halign(gtk4::Align::Center);
+        shield_icon.set_valign(gtk4::Align::Center);
         let lock_btn = gtk4::Button::builder()
             .child(&shield_icon)
             .tooltip_text("Site information and privacy")
@@ -93,30 +95,36 @@ impl AddressBar {
 
         let star_icon = gtk4::Image::from_icon_name("non-starred-symbolic");
         star_icon.set_pixel_size(16);
+        star_icon.set_halign(gtk4::Align::Center);
+        star_icon.set_valign(gtk4::Align::Center);
         let star_btn = gtk4::Button::builder()
             .child(&star_icon)
             .tooltip_text("Bookmark this page (Ctrl+D)")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
-            .visible(true)
+            .visible(false)
             .build();
         star_btn.set_size_request(28, 28);
         pill_box.append(&star_btn);
 
         let reader_icon = gtk4::Image::from_icon_name("view-reader-symbolic");
         reader_icon.set_pixel_size(16);
+        reader_icon.set_halign(gtk4::Align::Center);
+        reader_icon.set_valign(gtk4::Align::Center);
         let reader_btn = gtk4::Button::builder()
             .child(&reader_icon)
             .tooltip_text("Reader mode")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
-            .visible(true)
+            .visible(false)
             .build();
         reader_btn.set_size_request(28, 28);
         pill_box.append(&reader_btn);
 
         let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
         reload_icon.set_pixel_size(16);
+        reload_icon.set_halign(gtk4::Align::Center);
+        reload_icon.set_valign(gtk4::Align::Center);
         let reload_btn = gtk4::Button::builder()
             .child(&reload_icon)
             .tooltip_text("Reload page (Ctrl+R)")
@@ -218,6 +226,7 @@ impl AddressBar {
 
     /// Triggers the bookmark star button (e.g. from Ctrl+D shortcut)
     pub fn trigger_bookmark(&self) {
+        self.star_btn.set_visible(true);
         self.star_btn.emit_clicked();
     }
 
@@ -226,8 +235,8 @@ impl AddressBar {
         if !self.entry.has_focus() {
             *self.is_programmatic_change.borrow_mut() = true;
             self.entry.set_text(text);
-            *self.is_programmatic_change.borrow_mut() = false;
             EditableExt::set_alignment(&self.entry, 0.5);
+            *self.is_programmatic_change.borrow_mut() = false;
         }
     }
 
@@ -240,6 +249,7 @@ impl AddressBar {
             let url_check = url.to_string();
             let star_icon = self.star_icon.clone();
             let star_btn = self.star_btn.clone();
+            let entry_focus = self.entry.clone();
 
             storage.query_async(
                 move |db| {
@@ -250,9 +260,11 @@ impl AddressBar {
                     if is_bookmarked {
                         star_icon.set_icon_name(Some("starred-symbolic"));
                         star_btn.add_css_class("active");
+                        star_btn.set_visible(true);
                     } else {
                         star_icon.set_icon_name(Some("non-starred-symbolic"));
                         star_btn.remove_css_class("active");
+                        star_btn.set_visible(entry_focus.has_focus());
                     }
                 },
             );
@@ -297,7 +309,11 @@ impl AddressBar {
     /// Focuses the address entry and selects all text
     pub fn focus(&self) {
         self.entry.grab_focus();
-        self.entry.select_region(0, -1);
+        EditableExt::set_alignment(&self.entry, 0.0);
+        let ent = self.entry.clone();
+        glib::idle_add_local_once(move || {
+            ent.select_region(0, -1);
+        });
     }
 
     /// Registers the callback invoked when the user submits text in the address bar
@@ -576,6 +592,7 @@ impl AddressBar {
 
         // 2. Click behavior: first click selects all, subsequent clicks place cursor
         let gesture_click = gtk4::GestureClick::new();
+        gesture_click.set_propagation_phase(gtk4::PropagationPhase::Capture);
         let was_foc = self.was_focused_before_click.clone();
         let entry_c = self.entry.clone();
         gesture_click.connect_pressed(move |_, _, _, _| {
@@ -596,14 +613,19 @@ impl AddressBar {
         let was_foc_notify = self.was_focused_before_click.clone();
         let pop_f = self.suggestions_popover.clone();
         let deb_f = self.autocomplete_debounce.clone();
+        let star_btn_f = self.star_btn.clone();
 
         self.entry.connect_has_focus_notify(move |e| {
             if e.has_focus() {
                 *was_foc_notify.borrow_mut() = true;
                 EditableExt::set_alignment(e, 0.0);
+                star_btn_f.set_visible(true);
             } else {
                 *was_foc_notify.borrow_mut() = false;
                 EditableExt::set_alignment(e, 0.5);
+                if !star_btn_f.has_css_class("active") {
+                    star_btn_f.set_visible(false);
+                }
                 deb_f.cancel();
                 pop_f.popdown();
 
@@ -684,6 +706,7 @@ impl AddressBar {
         let pop_close = popover.clone();
         let star_icon = self.star_icon.clone();
         let star_btn = self.star_btn.clone();
+        let entry_bm_remove = self.entry.clone();
         let url_remove = url_cur.clone();
         let storage_ref = self.storage.borrow().clone();
         let on_bm_remove = self.on_bookmark_changed.clone();
@@ -706,6 +729,9 @@ impl AddressBar {
             }
             star_icon.set_icon_name(Some("non-starred-symbolic"));
             star_btn.remove_css_class("active");
+            if !entry_bm_remove.has_focus() {
+                star_btn.set_visible(false);
+            }
             pop_close.popdown();
         });
 
@@ -735,6 +761,7 @@ impl AddressBar {
             }
             star_icon_done.set_icon_name(Some("starred-symbolic"));
             star_btn_done.add_css_class("active");
+            star_btn_done.set_visible(true);
             pop_close_done.popdown();
         });
     }
@@ -948,8 +975,14 @@ impl AddressBar {
 
         let target_url = url.to_string();
         let gesture = gtk4::GestureClick::new();
+        let popover_action = popover;
         gesture.connect_pressed(move |_, _, _, _| {
-            popover.popdown();
+            if let Some(root) = popover_action.root()
+                && let Ok(win) = root.downcast::<gtk4::Window>()
+            {
+                gtk4::prelude::RootExt::set_focus(&win, None::<&gtk4::Widget>);
+            }
+            popover_action.popdown();
             if let Some(ref cb) = *on_act.borrow() {
                 cb(&target_url, false);
             }

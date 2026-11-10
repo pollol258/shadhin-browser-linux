@@ -64,32 +64,37 @@ entry:focus {
 .address-pill {
   min-height: 35px;
   min-width: 320px;
-  background-color: @view_bg;
+  background-color: @card_bg;
   border: 1px solid @border_color;
   border-radius: 999px;
   padding: 0 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  box-shadow: none;
 }
 
 .address-pill:focus-within {
   border-color: @accent_bg;
-  box-shadow: 0 0 0 1px @accent_bg, 0 1px 3px rgba(0, 0, 0, 0.08);
-  outline: none;
+  outline: 2px solid @accent_bg;
+  outline-offset: -1px;
 }
 
 .address-pill entry,
-.address-pill entry.shadhin-address-entry {
+.address-pill entry.shadhin-address-entry,
+.address-pill entry text {
   background: transparent;
   border: none;
   box-shadow: none;
   color: @text_color;
-  padding: 0 6px;
+  padding: 0 8px;
   min-height: 28px;
+  outline: none;
 }
 
 .address-pill entry:focus,
-.address-pill entry.shadhin-address-entry:focus {
+.address-pill entry:focus-visible,
+.address-pill entry.shadhin-address-entry:focus,
+.address-pill entry.shadhin-address-entry:focus-visible,
+.address-pill entry text:focus,
+.address-pill entry text:focus-visible {
   outline: none;
   box-shadow: none;
 }
@@ -106,6 +111,12 @@ entry:focus {
   color: @muted_text;
   box-shadow: none;
   filter: none;
+}
+
+.address-pill button.iconbtn:focus,
+.address-pill button.iconbtn:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .address-pill button.iconbtn:hover {

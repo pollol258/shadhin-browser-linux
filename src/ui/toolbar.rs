@@ -1,7 +1,7 @@
 //! Navigation toolbar / header bar containing navigation, address pill, downloads, and app menu
 //!
 //! Styled according to HANDOFF.md (56 px tall, icon buttons 36x36 px, icon 17 px, radius 8 px).
-//! Layout: [sidebar toggle] [back] [forward] ..... [reload/stop][address pill] ..... [download] [menu]
+//! Layout: [sidebar toggle] [back] [forward] ..... [address pill (lock, url, reload)] ..... [download] [menu]
 
 use crate::browser::downloads::DownloadManager;
 use crate::storage::StorageService;
