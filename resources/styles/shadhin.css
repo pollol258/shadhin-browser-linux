@@ -373,12 +373,25 @@ tab:checked .tab-close-btn {
 }
 
 /* --- Popovers (radius 12px, padding 12px, shadow_2) --- */
+popover.shadhin-popover contents,
 popover.shadhin-popover > contents {
-  background-color: @card_bg;
+  background-color: @window_bg;
+  color: @text_color;
   border: 1px solid @border_color;
   border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.125);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   padding: 12px;
+}
+
+.shadhin-popover-main {
+  min-width: 400px;
+}
+
+.downloadrow.surface-card {
+  background-color: @card_bg;
+  border: 1px solid @border_color;
+  border-radius: 10px;
+  padding: 8px 12px;
 }
 
 /* --- Banners (radius 8px, padding 10px 14px, 4px leading border) --- */

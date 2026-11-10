@@ -676,9 +676,11 @@ impl DownloadsPanel {
             }
             DownloadStatus::Interrupted => {
                 widgets.status_lbl.set_label("Interrupted");
-                widgets
-                    .details_lbl
-                    .set_label("Download interrupted by browser restart");
+                let err_msg = item
+                    .error
+                    .as_deref()
+                    .unwrap_or("Download interrupted by browser restart");
+                widgets.details_lbl.set_label(err_msg);
                 widgets.cancel_btn.set_visible(false);
                 widgets.retry_btn.set_visible(true);
                 widgets.open_btn.set_visible(false);

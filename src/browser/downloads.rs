@@ -243,6 +243,8 @@ impl From<&DownloadRecord> for DownloadItem {
 
 struct ActiveDownloadEntry {
     item: DownloadItem,
+    synthetic_id: i64,
+    db_id: Option<i64>,
     webkit_download: Option<webkit6::Download>,
     last_ui_update: Instant,
     last_db_update: Instant,
@@ -261,6 +263,15 @@ struct DownloadManagerInner {
     start_listeners: Vec<Rc<dyn Fn(&DownloadItem)>>,
     completion_listeners: Vec<Rc<dyn Fn(&DownloadItem)>>,
     attached_sessions: HashSet<usize>,
+}
+
+impl DownloadManagerInner {
+    fn find_entry_key(&self, id: i64) -> Option<i64> {
+        self.active_downloads
+            .iter()
+            .find(|(k, v)| **k == id || v.synthetic_id == id || v.item.id == id || v.db_id == Some(id))
+            .map(|(k, _)| *k)
+    }
 }
 
 /// Browser Download Manager coordinator
@@ -341,6 +352,8 @@ impl DownloadManager {
 
         let entry = ActiveDownloadEntry {
             item: initial_item.clone(),
+            synthetic_id: raw_id,
+            db_id: None,
             webkit_download: Some(download.clone()),
             last_ui_update: Instant::now(),
             last_db_update: Instant::now(),
@@ -375,6 +388,8 @@ impl DownloadManager {
             info!(
                 "Download {raw_id}: suggested='{suggested_filename}', sanitized='{clean_name}', destination='{dest_str}'"
             );
+            // Allow overwriting destination path resolved by collision resolver
+            dl.set_allow_overwrite(true);
             // CRITICAL: WebKitGTK 6.0 asserts g_path_is_absolute(destination). Must pass absolute filesystem path, NOT file:// URI!
             dl.set_destination(&dest_str);
 
@@ -477,9 +492,9 @@ impl DownloadManager {
 
     fn set_db_id(&self, synthetic_id: i64, db_id: i64) {
         let mut inner = self.inner.borrow_mut();
-        if let Some(mut entry) = inner.active_downloads.remove(&synthetic_id) {
+        if let Some(entry) = inner.active_downloads.get_mut(&synthetic_id) {
+            entry.db_id = Some(db_id);
             entry.item.id = db_id;
-            inner.active_downloads.insert(db_id, entry);
         }
     }
 
@@ -493,11 +508,7 @@ impl DownloadManager {
 
         {
             let mut inner = self.inner.borrow_mut();
-            let key = inner
-                .active_downloads
-                .iter()
-                .find(|(k, v)| **k == id || v.item.id == id)
-                .map(|(k, _)| *k);
+            let key = inner.find_entry_key(id);
 
             if let Some(k) = key
                 && let Some(entry) = inner.active_downloads.get_mut(&k)
@@ -575,11 +586,7 @@ impl DownloadManager {
 
         {
             let mut inner = self.inner.borrow_mut();
-            let key = inner
-                .active_downloads
-                .iter()
-                .find(|(k, v)| **k == id || v.item.id == id)
-                .map(|(k, _)| *k);
+            let key = inner.find_entry_key(id);
 
             if let Some(k) = key
                 && let Some(entry) = inner.active_downloads.get_mut(&k)
@@ -597,6 +604,7 @@ impl DownloadManager {
                 }
                 entry.item.speed_bytes_per_sec = 0.0;
                 entry.item.estimated_remaining_secs = None;
+                entry.item.error = None;
 
                 finished_item = Some(entry.item.clone());
 
@@ -630,11 +638,7 @@ impl DownloadManager {
 
         {
             let mut inner = self.inner.borrow_mut();
-            let key = inner
-                .active_downloads
-                .iter()
-                .find(|(k, v)| **k == id || v.item.id == id)
-                .map(|(k, _)| *k);
+            let key = inner.find_entry_key(id);
 
             if let Some(k) = key
                 && let Some(entry) = inner.active_downloads.get_mut(&k)
@@ -647,8 +651,20 @@ impl DownloadManager {
                     entry.item.status = DownloadStatus::Cancelled;
                     entry.item.error = Some("Download cancelled".to_string());
                 } else {
-                    entry.item.status = DownloadStatus::Failed;
-                    entry.item.error = Some(error.message().to_string());
+                    let err_msg = error.message().to_string();
+                    let is_interrupted = error.kind::<webkit6::NetworkError>()
+                        == Some(webkit6::NetworkError::Cancelled)
+                        || err_msg.to_lowercase().contains("interrupted")
+                        || err_msg.to_lowercase().contains("lost")
+                        || err_msg.to_lowercase().contains("timed out")
+                        || err_msg.to_lowercase().contains("reset");
+
+                    if is_interrupted {
+                        entry.item.status = DownloadStatus::Interrupted;
+                    } else {
+                        entry.item.status = DownloadStatus::Failed;
+                    }
+                    entry.item.error = Some(err_msg);
                 }
 
                 entry.item.speed_bytes_per_sec = 0.0;
@@ -686,11 +702,7 @@ impl DownloadManager {
 
         {
             let mut inner = self.inner.borrow_mut();
-            let key = inner
-                .active_downloads
-                .iter()
-                .find(|(k, v)| **k == id || v.item.id == id)
-                .map(|(k, _)| *k);
+            let key = inner.find_entry_key(id);
 
             if let Some(k) = key
                 && let Some(entry) = inner.active_downloads.get_mut(&k)
@@ -735,21 +747,23 @@ impl DownloadManager {
     ) {
         let url_opt = {
             let inner = self.inner.borrow();
-            let key = inner
-                .active_downloads
-                .iter()
-                .find(|(k, v)| **k == id || v.item.id == id)
-                .map(|(k, _)| *k);
+            let key = inner.find_entry_key(id);
             key.and_then(|k| inner.active_downloads.get(&k))
                 .map(|e| e.item.url.clone())
         };
 
+        let storage = self.inner.borrow().storage.clone();
         if let Some(url) = url_opt {
+            info!("Retrying download for URL: {url}");
+            storage.dispatch(move |db| {
+                let repo = DownloadRepository::new(db.conn());
+                let _ = repo.delete(id);
+            });
             self.download_uri(session, &url, persistence_allowed);
         } else {
-            let storage = self.inner.borrow().storage.clone();
             let mgr = self.clone();
             let session_clone = session.clone();
+            let storage_del = storage.clone();
             storage.query_async(
                 move |db| {
                     db.conn()
@@ -762,7 +776,14 @@ impl DownloadManager {
                 },
                 move |res| {
                     if let Some(url) = res {
+                        info!("Retrying download from DB record URL: {url}");
+                        storage_del.dispatch(move |db| {
+                            let repo = DownloadRepository::new(db.conn());
+                            let _ = repo.delete(id);
+                        });
                         mgr.download_uri(&session_clone, &url, persistence_allowed);
+                    } else {
+                        warn!("Cannot retry download {id}: URL not found in active downloads or DB");
                     }
                 },
             );

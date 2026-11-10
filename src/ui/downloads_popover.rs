@@ -84,18 +84,20 @@ impl DownloadsPopover {
             .autohide(true)
             .css_classes(["shadhin-popover"])
             .build();
+        popover.set_size_request(420, -1);
         popover.set_parent(anchor);
 
         let main_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(8)
-            .width_request(380)
+            .spacing(10)
+            .css_classes(["shadhin-popover-main"])
             .build();
+        main_box.set_size_request(420, -1);
 
         // Header: "Downloads" title and "Clear Finished" button
         let header = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .spacing(8)
+            .spacing(12)
             .css_classes(["shadhin-popover-header"])
             .build();
 
@@ -103,6 +105,7 @@ impl DownloadsPopover {
             .label("Downloads")
             .hexpand(true)
             .halign(gtk4::Align::Start)
+            .valign(gtk4::Align::Center)
             .css_classes(["font-bold", "heading"])
             .build();
         header.append(&title_lbl);
@@ -110,6 +113,7 @@ impl DownloadsPopover {
         let clear_btn = gtk4::Button::builder()
             .label("Clear finished")
             .css_classes(["flat", "dim-label"])
+            .halign(gtk4::Align::End)
             .valign(gtk4::Align::Center)
             .build();
         header.append(&clear_btn);
@@ -144,14 +148,15 @@ impl DownloadsPopover {
         let scrolled = gtk4::ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
-            .max_content_height(360)
+            .max_content_height(380)
             .propagate_natural_height(true)
             .hexpand(true)
             .build();
+        scrolled.set_size_request(420, -1);
 
         let list_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(6)
+            .spacing(8)
             .hexpand(true)
             .build();
         scrolled.set_child(Some(&list_box));
@@ -283,12 +288,14 @@ impl DownloadsPopover {
             .margin_end(4)
             .margin_top(4)
             .margin_bottom(4)
+            .hexpand(true)
             .css_classes(["downloadrow", "surface-card"])
             .build();
 
         let icon = gtk4::Image::from_icon_name("text-x-generic-symbolic");
         icon.set_pixel_size(24);
         icon.set_valign(gtk4::Align::Start);
+        icon.set_halign(gtk4::Align::Center);
         card.append(&icon);
 
         let content_box = gtk4::Box::builder()
@@ -300,7 +307,10 @@ impl DownloadsPopover {
         let name_lbl = gtk4::Label::builder()
             .label(&item.file_name)
             .halign(gtk4::Align::Start)
-            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .valign(gtk4::Align::Center)
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk4::pango::EllipsizeMode::Middle)
             .css_classes(["font-semibold"])
             .build();
         content_box.append(&name_lbl);
@@ -338,7 +348,10 @@ impl DownloadsPopover {
                 format!("Finished{size}")
             }
             DownloadStatus::Cancelled => "Cancelled".to_string(),
-            DownloadStatus::Interrupted => "Interrupted (Connection lost)".to_string(),
+            DownloadStatus::Interrupted => {
+                let err = item.error.as_deref().unwrap_or("Connection lost");
+                format!("Interrupted — {err}")
+            }
             DownloadStatus::Failed => {
                 let err = item.error.as_deref().unwrap_or("Network error");
                 format!("Failed — {err}")
@@ -348,6 +361,10 @@ impl DownloadsPopover {
         let status_lbl = gtk4::Label::builder()
             .label(&status_text)
             .halign(gtk4::Align::Start)
+            .valign(gtk4::Align::Center)
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
             .css_classes(["dim-label", "font-xs"])
             .build();
         content_box.append(&status_lbl);
@@ -392,8 +409,10 @@ impl DownloadsPopover {
         // Action buttons
         let actions = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .spacing(6)
-            .margin_top(2)
+            .spacing(8)
+            .halign(gtk4::Align::Start)
+            .valign(gtk4::Align::Center)
+            .margin_top(4)
             .build();
 
         match item.status {
@@ -401,6 +420,8 @@ impl DownloadsPopover {
                 let cancel_btn = gtk4::Button::builder()
                     .label("Cancel")
                     .css_classes(["flat", "destructive-action", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let mgr = self.download_mgr.clone();
                 let id = item.id;
@@ -417,6 +438,8 @@ impl DownloadsPopover {
                 let open_btn = gtk4::Button::builder()
                     .label("Open")
                     .css_classes(["flat", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let fp_open = file_path.clone();
                 let fn_open = file_name;
@@ -463,6 +486,8 @@ impl DownloadsPopover {
                 let folder_btn = gtk4::Button::builder()
                     .label("Show in folder")
                     .css_classes(["flat", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let fp_folder = file_path;
                 folder_btn.connect_clicked(move |_| {
@@ -479,6 +504,8 @@ impl DownloadsPopover {
                 let remove_btn = gtk4::Button::builder()
                     .label("Remove")
                     .css_classes(["flat", "dim-label", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let id = item.id;
                 let st = self.storage.clone();
@@ -497,10 +524,12 @@ impl DownloadsPopover {
                 });
                 actions.append(&remove_btn);
             }
-            DownloadStatus::Interrupted => {
+            DownloadStatus::Interrupted | DownloadStatus::Failed => {
                 let retry_btn = gtk4::Button::builder()
                     .label("Retry")
                     .css_classes(["flat", "suggested-action", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let id = item.id;
                 let mgr = self.download_mgr.clone();
@@ -518,6 +547,8 @@ impl DownloadsPopover {
                 let remove_btn = gtk4::Button::builder()
                     .label("Remove")
                     .css_classes(["flat", "dim-label", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let id = item.id;
                 let st = self.storage.clone();
@@ -536,10 +567,12 @@ impl DownloadsPopover {
                 });
                 actions.append(&remove_btn);
             }
-            DownloadStatus::Cancelled | DownloadStatus::Failed => {
+            DownloadStatus::Cancelled => {
                 let remove_btn = gtk4::Button::builder()
                     .label("Remove")
                     .css_classes(["flat", "dim-label", "font-xs"])
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Center)
                     .build();
                 let id = item.id;
                 let st = self.storage.clone();

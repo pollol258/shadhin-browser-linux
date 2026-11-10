@@ -105,8 +105,30 @@ impl<'a> DownloadRepository<'a> {
         Ok(())
     }
 
-    /// Marks any lingering "downloading" states as "interrupted" on application startup
+    /// Marks any lingering "downloading" states as "interrupted" on application startup.
+    /// If the file on disk is already fully written (size matches total_bytes), marks it "completed".
     pub fn mark_interrupted_on_startup(&self) -> Result<usize> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_path, total_bytes FROM downloads WHERE state = 'downloading';",
+        )?;
+        let rows: Vec<(i64, String, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for (id, file_path, total_bytes) in rows {
+            let path = std::path::Path::new(&file_path);
+            if total_bytes > 0
+                && let Ok(meta) = std::fs::metadata(path)
+                && meta.len() >= total_bytes as u64
+            {
+                let _ = self.conn.execute(
+                    "UPDATE downloads SET state = 'completed', received_bytes = ?1, error = NULL WHERE id = ?2;",
+                    rusqlite::params![total_bytes, id],
+                );
+            }
+        }
+
         self.conn.execute(
             "UPDATE downloads SET state = 'interrupted', error = 'Download interrupted by browser restart'
              WHERE state = 'downloading';",

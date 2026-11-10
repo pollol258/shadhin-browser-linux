@@ -418,6 +418,8 @@ impl ShadhinWindow {
                 .title("Shadhin Browser closed unexpectedly.")
                 .button_label("Restore Session")
                 .revealed(true)
+                .vexpand(false)
+                .hexpand(true)
                 .build();
 
             let sm_click = session_mgr.clone();
