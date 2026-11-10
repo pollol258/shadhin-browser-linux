@@ -14,6 +14,7 @@ pub struct TabDisplayInfo {
     pub favicon: Option<gtk4::gdk::Texture>,
     pub is_newtab: bool,
     pub is_discarded: bool,
+    pub is_pinned: bool,
 }
 
 pub struct ShadhinTabStrip {
@@ -22,8 +23,11 @@ pub struct ShadhinTabStrip {
     new_tab_btn: gtk4::Button,
     tab_view: adw::TabView,
     on_new_tab: Rc<RefCell<Option<Box<dyn Fn(Option<String>)>>>>,
+    on_reload_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_duplicate_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_pin_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_close_others: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    active_popover: Rc<RefCell<Option<gtk4::Popover>>>,
 }
 
 impl ShadhinTabStrip {
@@ -61,8 +65,11 @@ impl ShadhinTabStrip {
             }
         });
 
+        let on_reload_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_duplicate_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_pin_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_close_others: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let active_popover: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
 
         Self {
             container,
@@ -70,8 +77,11 @@ impl ShadhinTabStrip {
             new_tab_btn,
             tab_view: tab_view.clone(),
             on_new_tab,
+            on_reload_tab,
             on_duplicate_tab,
+            on_pin_tab,
             on_close_others,
+            active_popover,
         }
     }
 
@@ -198,6 +208,23 @@ impl ShadhinTabStrip {
                 .margin_end(4)
                 .build();
 
+            // 1. Reload Tab
+            let reload_btn = gtk4::Button::builder()
+                .label("Reload Tab")
+                .css_classes(["flat"])
+                .build();
+            let on_reload_clone = self.on_reload_tab.clone();
+            let pop_reload = popover.clone();
+            let reload_idx = i;
+            reload_btn.connect_clicked(move |_| {
+                pop_reload.popdown();
+                if let Some(ref cb) = *on_reload_clone.borrow() {
+                    cb(reload_idx);
+                }
+            });
+            menu_box.append(&reload_btn);
+
+            // 2. Duplicate Tab
             let dup_btn = gtk4::Button::builder()
                 .label("Duplicate Tab")
                 .css_classes(["flat"])
@@ -213,21 +240,29 @@ impl ShadhinTabStrip {
             });
             menu_box.append(&dup_btn);
 
-            let close_others_btn = gtk4::Button::builder()
-                .label("Close Other Tabs")
+            // 3. Pin Tab / Unpin Tab
+            let is_pinned = info.map(|t| t.is_pinned).unwrap_or(false);
+            let pin_label = if is_pinned {
+                "Unpin Tab"
+            } else {
+                "Pin Tab"
+            };
+            let pin_btn = gtk4::Button::builder()
+                .label(pin_label)
                 .css_classes(["flat"])
                 .build();
-            let on_co_clone = self.on_close_others.clone();
-            let pop_co = popover.clone();
-            let co_idx = i;
-            close_others_btn.connect_clicked(move |_| {
-                pop_co.popdown();
-                if let Some(ref cb) = *on_co_clone.borrow() {
-                    cb(co_idx);
+            let on_pin_clone = self.on_pin_tab.clone();
+            let pop_pin = popover.clone();
+            let pin_idx = i;
+            pin_btn.connect_clicked(move |_| {
+                pop_pin.popdown();
+                if let Some(ref cb) = *on_pin_clone.borrow() {
+                    cb(pin_idx);
                 }
             });
-            menu_box.append(&close_others_btn);
+            menu_box.append(&pin_btn);
 
+            // 4. Close Tab
             let close_tab_menu_btn = gtk4::Button::builder()
                 .label("Close Tab")
                 .css_classes(["flat"])
@@ -246,7 +281,12 @@ impl ShadhinTabStrip {
             let right_click = gtk4::GestureClick::new();
             right_click.set_button(3); // Right click button
             let pop_popup = popover.clone();
+            let active_pop_ref = self.active_popover.clone();
             right_click.connect_pressed(move |_, _, _, _| {
+                if let Some(ref old_pop) = *active_pop_ref.borrow() {
+                    old_pop.popdown();
+                }
+                *active_pop_ref.borrow_mut() = Some(pop_popup.clone());
                 pop_popup.popup();
             });
             tab_btn.add_controller(right_click);
@@ -296,6 +336,24 @@ impl ShadhinTabStrip {
     /// Connects the callback when duplicating a tab via context menu
     pub fn connect_duplicate_tab<F: Fn(i32) + 'static>(&self, callback: F) {
         *self.on_duplicate_tab.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects the callback when reloading a tab via context menu
+    pub fn connect_reload_tab<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_reload_tab.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects the callback when pinning or unpinning a tab via context menu
+    pub fn connect_pin_tab<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_pin_tab.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Dismisses any active tab context menu popover
+    pub fn close_popover(&self) {
+        if let Some(ref pop) = *self.active_popover.borrow() {
+            pop.popdown();
+        }
+        *self.active_popover.borrow_mut() = None;
     }
 
     /// Connects the callback when closing all other tabs via context menu

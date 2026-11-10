@@ -106,6 +106,7 @@ pub struct ShadhinWindow {
 /// Navigation execution context consolidating cross-component dependencies
 #[derive(Clone)]
 pub struct NavigationContext {
+    pub window: adw::ApplicationWindow,
     pub tab_manager: Rc<RefCell<TabManager>>,
     pub config: Rc<RefCell<BrowserConfig>>,
     pub tab_items: Rc<RefCell<Vec<Rc<TabUiItem>>>>,
@@ -334,9 +335,13 @@ impl ShadhinWindow {
         });
 
         let tb_blur = toolbar.clone();
+        let ts_blur = tab_strip.clone();
+        let sb_blur = sidebar.clone();
         window.connect_is_active_notify(move |win| {
             if !win.is_active() {
                 tb_blur.close_all_popovers();
+                ts_blur.close_popover();
+                sb_blur.close_popover();
             }
         });
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
@@ -494,6 +499,7 @@ impl ShadhinWindow {
         });
 
         let nav_ctx = Rc::new(NavigationContext {
+            window: window.clone(),
             tab_manager: tab_manager.clone(),
             config: config.clone(),
             tab_items: tab_items.clone(),
@@ -659,6 +665,7 @@ impl ShadhinWindow {
                     favicon: b.favicon.clone(),
                     is_newtab: b.is_newtab(),
                     is_discarded: b.is_discarded,
+                    is_pinned: b.pinned,
                 }
             })
             .collect();
@@ -1008,7 +1015,8 @@ impl NavigationContext {
         if let Some(url) = initial_url {
             if url != "about:newtab" && url != "shadhin:newtab" {
                 let is_dev = std::env::var("SHADHIN_DEV").is_ok()
-                    || std::env::var("SHADHIN_DEV_CSS").is_ok();
+                    || std::env::var("SHADHIN_DEV_CSS").is_ok()
+                    || url.starts_with("view-source:");
                 let settings = crate::browser::navigation::ClassificationSettings {
                     search_template: self.config.borrow().search_engine_url.clone(),
                     allow_file: true,
@@ -1885,36 +1893,160 @@ impl NavigationContext {
             None
         });
 
-        // 11. connect_context_menu
+        // 11. connect_context_menu (Page, Link, Image contextual menus via hit_test)
         let nav_cm = self.clone();
-        webview.connect_context_menu(move |_, menu, hit_test| {
-            if hit_test.context_is_link()
-                && let Some(link_uri) = hit_test.link_uri()
-            {
-                let nav_item = nav_cm.clone();
-                let uri_str = link_uri.to_string();
-                let act_new_tab = gtk4::gio::SimpleAction::new("open-link-new-tab", None);
-                act_new_tab.connect_activate(move |_, _| {
-                    nav_item.create_tab(Some(&uri_str), None);
+        webview.connect_context_menu(move |view, menu, hit_test| {
+            menu.remove_all();
+
+            let is_link = hit_test.context_is_link();
+            let is_image = hit_test.context_is_image();
+            let link_uri = hit_test.link_uri();
+            let image_uri = hit_test.image_uri();
+
+            // Link Context Menu: Open Link in New Tab, Open Link in New Window, Copy Link Address
+            if is_link && let Some(link) = link_uri {
+                let link_str = link.to_string();
+
+                let nav_tab = nav_cm.clone();
+                let url_tab = link_str.clone();
+                let act_tab = gtk4::gio::SimpleAction::new("ctx-open-link-tab", None);
+                act_tab.connect_activate(move |_, _| {
+                    nav_tab.create_tab(Some(&url_tab), None);
                 });
-                let item = webkit6::ContextMenuItem::from_gaction(
-                    &act_new_tab,
+                let item_tab = webkit6::ContextMenuItem::from_gaction(
+                    &act_tab,
                     "Open Link in New Tab",
                     None,
                 );
-                menu.append(&item);
+                menu.append(&item_tab);
 
-                let item_save_link = webkit6::ContextMenuItem::from_stock_action(
-                    webkit6::ContextMenuAction::DownloadLinkToDisk,
+                let nav_win = nav_cm.clone();
+                let url_win = link_str.clone();
+                let act_win = gtk4::gio::SimpleAction::new("ctx-open-link-win", None);
+                act_win.connect_activate(move |_, _| {
+                    if let Some(app) = nav_win
+                        .window
+                        .application()
+                        .and_downcast::<adw::Application>()
+                    {
+                        let win = ShadhinWindow::new_with_urls(&app, std::slice::from_ref(&url_win));
+                        win.present();
+                    }
+                });
+                let item_win = webkit6::ContextMenuItem::from_gaction(
+                    &act_win,
+                    "Open Link in New Window",
+                    None,
                 );
-                menu.append(&item_save_link);
+                menu.append(&item_win);
+
+                let url_copy = link_str;
+                let act_copy = gtk4::gio::SimpleAction::new("ctx-copy-link", None);
+                act_copy.connect_activate(move |_, _| {
+                    if let Some(display) = gtk4::gdk::Display::default() {
+                        display.clipboard().set_text(&url_copy);
+                    }
+                });
+                let item_copy = webkit6::ContextMenuItem::from_gaction(
+                    &act_copy,
+                    "Copy Link Address",
+                    None,
+                );
+                menu.append(&item_copy);
             }
 
-            if hit_test.context_is_image() {
-                let item_save_img = webkit6::ContextMenuItem::from_stock_action(
+            // Image Context Menu: Open Image in New Tab, Save Image As, Copy Image, Copy Image Address
+            if is_image && let Some(img) = image_uri {
+                if is_link {
+                    menu.append(&webkit6::ContextMenuItem::new_separator());
+                }
+
+                let img_str = img.to_string();
+
+                let nav_img = nav_cm.clone();
+                let url_img = img_str.clone();
+                let act_img_tab = gtk4::gio::SimpleAction::new("ctx-open-img-tab", None);
+                act_img_tab.connect_activate(move |_, _| {
+                    nav_img.create_tab(Some(&url_img), None);
+                });
+                let item_img_tab = webkit6::ContextMenuItem::from_gaction(
+                    &act_img_tab,
+                    "Open Image in New Tab",
+                    None,
+                );
+                menu.append(&item_img_tab);
+
+                let item_save_img = webkit6::ContextMenuItem::from_stock_action_with_label(
                     webkit6::ContextMenuAction::DownloadImageToDisk,
+                    "Save Image As",
                 );
                 menu.append(&item_save_img);
+
+                let item_copy_img = webkit6::ContextMenuItem::from_stock_action_with_label(
+                    webkit6::ContextMenuAction::CopyImageToClipboard,
+                    "Copy Image",
+                );
+                menu.append(&item_copy_img);
+
+                let url_img_copy = img_str;
+                let act_copy_img_url = gtk4::gio::SimpleAction::new("ctx-copy-img-addr", None);
+                act_copy_img_url.connect_activate(move |_, _| {
+                    if let Some(display) = gtk4::gdk::Display::default() {
+                        display.clipboard().set_text(&url_img_copy);
+                    }
+                });
+                let item_copy_addr = webkit6::ContextMenuItem::from_gaction(
+                    &act_copy_img_url,
+                    "Copy Image Address",
+                    None,
+                );
+                menu.append(&item_copy_addr);
+            }
+
+            // Page Context Menu: Back, Forward, Reload, View Page Source
+            // Only shown if neither a link nor an image is clicked!
+            if !is_link && !is_image {
+                let wv_b = view.clone();
+                let act_back = gtk4::gio::SimpleAction::new("ctx-page-back", None);
+                act_back.set_enabled(view.can_go_back());
+                act_back.connect_activate(move |_, _| {
+                    wv_b.go_back();
+                });
+                let item_back = webkit6::ContextMenuItem::from_gaction(&act_back, "Back", None);
+                menu.append(&item_back);
+
+                let wv_f = view.clone();
+                let act_fwd = gtk4::gio::SimpleAction::new("ctx-page-fwd", None);
+                act_fwd.set_enabled(view.can_go_forward());
+                act_fwd.connect_activate(move |_, _| {
+                    wv_f.go_forward();
+                });
+                let item_fwd = webkit6::ContextMenuItem::from_gaction(&act_fwd, "Forward", None);
+                menu.append(&item_fwd);
+
+                let wv_r = view.clone();
+                let act_reload = gtk4::gio::SimpleAction::new("ctx-page-reload", None);
+                act_reload.connect_activate(move |_, _| {
+                    wv_r.reload();
+                });
+                let item_reload =
+                    webkit6::ContextMenuItem::from_gaction(&act_reload, "Reload", None);
+                menu.append(&item_reload);
+
+                if let Some(uri) = view.uri() {
+                    let nav_src = nav_cm.clone();
+                    let uri_src = uri.to_string();
+                    let act_source = gtk4::gio::SimpleAction::new("ctx-page-source", None);
+                    act_source.connect_activate(move |_, _| {
+                        nav_src.create_tab(Some(&format!("view-source:{uri_src}")), None);
+                    });
+                    let item_source = webkit6::ContextMenuItem::from_gaction(
+                        &act_source,
+                        "View Page Source",
+                        None,
+                    );
+                    menu.append(&item_source);
+                }
             }
 
             false
@@ -1972,6 +2104,12 @@ impl NavigationContext {
                         drop(wv_opt);
                         self.setup_webview_for_tab(tab_idx, page)
                     };
+
+                    if clean_url.starts_with("view-source:")
+                        && let Some(settings) = webkit6::prelude::WebViewExt::settings(&wv)
+                    {
+                        settings.set_enable_developer_extras(true);
+                    }
 
                     item.stack.set_visible_child_name("web");
                     wv.load_uri(&clean_url);
@@ -2089,6 +2227,7 @@ impl NavigationContext {
                     favicon: b.favicon.clone(),
                     is_newtab: b.is_newtab(),
                     is_discarded: b.is_discarded,
+                    is_pinned: b.pinned,
                 }
             })
             .collect();
@@ -2154,6 +2293,11 @@ impl NavigationContext {
 }
 
 impl ShadhinWindow {
+    /// Synchronizes tab strip and sidebar with current tab manager state
+    pub fn sync_tabs(&self) {
+        self.nav_ctx.sync_tabs();
+    }
+
     /// Sets up cross-component UI signals
     fn setup_signals(&self) {
         // 1. Sidebar Toggle Button in Toolbar
@@ -2184,25 +2328,152 @@ impl ShadhinWindow {
             nav_new.create_tab(opt_url.as_deref(), None);
         });
 
-        // 3. Tab Context Menu Actions: Duplicate Tab
-        let tm_dup = self.tab_manager.clone();
-        let tv_dup = self.tab_view.clone();
-        let ts_dup = self.tab_strip.clone();
-        let sb_dup = self.sidebar.clone();
-        let tb_dup = self.toolbar.clone();
-        let self_dup = self.window.clone();
-        let _ = self_dup;
+        // 3. Tab Context Menu Actions (Reload, Duplicate, Pin/Unpin, Close)
+        let nav_reload = self.clone();
+        let handle_reload = move |idx: i32| {
+            if idx >= 0 {
+                let items = nav_reload.tab_items.borrow();
+                if let Some(item) = items.get(idx as usize)
+                    && let Some(ref wv) = *item.webview.borrow()
+                {
+                    wv.reload();
+                }
+            }
+        };
 
-        self.tab_strip.connect_duplicate_tab(move |idx| {
+        let nav_dup = self.clone();
+        let handle_duplicate = move |idx: i32| {
             if idx >= 0 {
                 info!("Duplicating tab {idx}");
-                let mut tm = tm_dup.borrow_mut();
-                if let Some((_new_idx, _tab)) = tm.duplicate_tab(idx as usize) {
+                let tm = nav_dup.tab_manager.borrow();
+                if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                    let (url, parent_id) = {
+                        let b = tab_cell.borrow();
+                        (b.url.clone(), Some(b.id))
+                    };
                     drop(tm);
-                    Self::sync_tabs_external(&tm_dup, &ts_dup, &sb_dup, &tv_dup, &tb_dup);
+                    nav_dup.create_tab(Some(&url), parent_id);
+                }
+            }
+        };
+
+        let nav_pin = self.clone();
+        let handle_pin = move |idx: i32| {
+            if idx >= 0 && idx < nav_pin.tab_view.n_pages() {
+                let page = nav_pin.tab_view.nth_page(idx);
+                let new_pinned = !page.is_pinned();
+                nav_pin.tab_view.set_page_pinned(&page, new_pinned);
+                let tm = nav_pin.tab_manager.borrow();
+                if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                    tab_cell.borrow_mut().pinned = new_pinned;
+                }
+                drop(tm);
+                nav_pin.sync_tabs();
+            }
+        };
+
+        let nav_close = self.clone();
+        let handle_close = move |idx: i32| {
+            if idx >= 0 && idx < nav_close.tab_view.n_pages() {
+                let page = nav_close.tab_view.nth_page(idx);
+                nav_close.tab_view.close_page(&page);
+            }
+        };
+
+        self.tab_strip.connect_reload_tab(handle_reload.clone());
+        self.tab_strip.connect_duplicate_tab(handle_duplicate.clone());
+        self.tab_strip.connect_pin_tab(handle_pin.clone());
+
+        self.sidebar.connect_tab_reload(handle_reload);
+        self.sidebar.connect_tab_duplicate(handle_duplicate);
+        self.sidebar.connect_tab_pin(handle_pin);
+        self.sidebar.connect_tab_close(handle_close);
+
+        // Tab View native menu model (for horizontal tab bar right click)
+        let tab_menu_model = gio::Menu::new();
+        tab_menu_model.append(Some("Reload Tab"), Some("win.tab-reload"));
+        tab_menu_model.append(Some("Duplicate Tab"), Some("win.tab-duplicate"));
+        tab_menu_model.append(Some("Pin / Unpin Tab"), Some("win.tab-pin"));
+        tab_menu_model.append(Some("Close Tab"), Some("win.tab-close"));
+        self.tab_view.set_menu_model(Some(&tab_menu_model));
+
+        let selected_tab_ctx = Rc::new(RefCell::new(None::<adw::TabPage>));
+        let sel_tab_setup = selected_tab_ctx.clone();
+        self.tab_view.connect_setup_menu(move |_, page_opt| {
+            *sel_tab_setup.borrow_mut() = page_opt.cloned();
+        });
+
+        let nav_tr = self.clone();
+        let sel_tr = selected_tab_ctx.clone();
+        let act_tr = gio::SimpleAction::new("tab-reload", None);
+        act_tr.connect_activate(move |_, _| {
+            let page_opt = sel_tr.borrow().clone();
+            if let Some(ref page) = page_opt {
+                let idx = nav_tr.tab_view.page_position(page);
+                if idx >= 0 {
+                    let items = nav_tr.tab_items.borrow();
+                    if let Some(item) = items.get(idx as usize)
+                        && let Some(ref wv) = *item.webview.borrow()
+                    {
+                        wv.reload();
+                    }
                 }
             }
         });
+        self.window.add_action(&act_tr);
+
+        let nav_td = self.clone();
+        let sel_td = selected_tab_ctx.clone();
+        let act_td = gio::SimpleAction::new("tab-duplicate", None);
+        act_td.connect_activate(move |_, _| {
+            let page_opt = sel_td.borrow().clone();
+            if let Some(ref page) = page_opt {
+                let idx = nav_td.tab_view.page_position(page);
+                if idx >= 0 {
+                    let tm = nav_td.tab_manager.borrow();
+                    if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                        let (url, parent_id) = {
+                            let b = tab_cell.borrow();
+                            (b.url.clone(), Some(b.id))
+                        };
+                        drop(tm);
+                        nav_td.create_tab(Some(&url), parent_id);
+                    }
+                }
+            }
+        });
+        self.window.add_action(&act_td);
+
+        let nav_tp = self.clone();
+        let sel_tp = selected_tab_ctx.clone();
+        let act_tp = gio::SimpleAction::new("tab-pin", None);
+        act_tp.connect_activate(move |_, _| {
+            let page_opt = sel_tp.borrow().clone();
+            if let Some(ref page) = page_opt {
+                let new_pinned = !page.is_pinned();
+                nav_tp.tab_view.set_page_pinned(page, new_pinned);
+                let idx = nav_tp.tab_view.page_position(page);
+                if idx >= 0 {
+                    let tm = nav_tp.tab_manager.borrow();
+                    if let Some(tab_cell) = tm.get_tab(idx as usize) {
+                        tab_cell.borrow_mut().pinned = new_pinned;
+                    }
+                }
+                nav_tp.sync_tabs();
+            }
+        });
+        self.window.add_action(&act_tp);
+
+        let nav_tc = self.clone();
+        let sel_tc = selected_tab_ctx;
+        let act_tc = gio::SimpleAction::new("tab-close", None);
+        act_tc.connect_activate(move |_, _| {
+            let page_opt = sel_tc.borrow().clone();
+            if let Some(ref page) = page_opt {
+                nav_tc.tab_view.close_page(page);
+            }
+        });
+        self.window.add_action(&act_tc);
 
         // 4. Tab Context Menu Actions: Close Other Tabs
         let tm_co = self.tab_manager.clone();

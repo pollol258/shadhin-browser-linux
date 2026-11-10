@@ -16,12 +16,15 @@ pub struct ShadhinSidebar {
     footer_label: gtk4::Label,
     on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_tab_selected: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_reload: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
+    on_tab_duplicate: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_tab_close: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_tab_pin: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_tab_mute: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_tab_sleep: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    active_popover: Rc<RefCell<Option<gtk4::Popover>>>,
 }
 
 impl ShadhinSidebar {
@@ -36,6 +39,8 @@ impl ShadhinSidebar {
 
         let on_new_tab: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let on_tab_selected: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_reload: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
+        let on_tab_duplicate: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_tab_close: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_tab_pin: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_tab_mute: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
@@ -43,6 +48,7 @@ impl ShadhinSidebar {
         let on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
             Rc::new(RefCell::new(None));
         let on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        let active_popover: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
 
         // 1. Sidebar Header: "Tabs" label + New Tab (+) button
         let header_box = gtk4::Box::builder()
@@ -123,12 +129,15 @@ impl ShadhinSidebar {
             footer_label,
             on_new_tab,
             on_tab_selected,
+            on_tab_reload,
+            on_tab_duplicate,
             on_tab_close,
             on_tab_pin,
             on_tab_mute,
             on_tab_sleep,
             on_workspace_selected,
             on_create_workspace,
+            active_popover,
         }
     }
 
@@ -147,6 +156,16 @@ impl ShadhinSidebar {
         *self.on_tab_selected.borrow_mut() = Some(Box::new(callback));
     }
 
+    /// Connects tab reload from context menu
+    pub fn connect_tab_reload<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_reload.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Connects tab duplicate from context menu
+    pub fn connect_tab_duplicate<F: Fn(i32) + 'static>(&self, callback: F) {
+        *self.on_tab_duplicate.borrow_mut() = Some(Box::new(callback));
+    }
+
     /// Connects tab close
     pub fn connect_tab_close<F: Fn(i32) + 'static>(&self, callback: F) {
         *self.on_tab_close.borrow_mut() = Some(Box::new(callback));
@@ -155,6 +174,14 @@ impl ShadhinSidebar {
     /// Connects tab pin toggle
     pub fn connect_tab_pin<F: Fn(i32) + 'static>(&self, callback: F) {
         *self.on_tab_pin.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Dismisses any active tab popover in the sidebar
+    pub fn close_popover(&self) {
+        if let Some(ref pop) = *self.active_popover.borrow() {
+            pop.popdown();
+        }
+        *self.active_popover.borrow_mut() = None;
     }
 
     /// Connects tab mute toggle
@@ -257,15 +284,22 @@ impl ShadhinSidebar {
             });
             row_box.add_controller(tab_click);
 
-            // Context menu for Tab (Pin, Sleep, Close)
+            // Context menu for Tab (Reload, Duplicate, Pin/Unpin, Close)
             let right_click = gtk4::GestureClick::new();
             right_click.set_button(3); // Right click
+            let on_reload_cb = self.on_tab_reload.clone();
+            let on_dup_cb = self.on_tab_duplicate.clone();
             let on_pin_cb = self.on_tab_pin.clone();
-            let on_sleep_cb = self.on_tab_sleep.clone();
             let on_close_ctx = self.on_tab_close.clone();
+            let is_pinned = tab_data.is_pinned;
+            let active_pop_ref = self.active_popover.clone();
 
             let row_box_ref = row_box.clone();
             right_click.connect_pressed(move |_, _, _, _| {
+                if let Some(ref old_pop) = *active_pop_ref.borrow() {
+                    old_pop.popdown();
+                }
+
                 let pop = gtk4::Popover::new();
                 pop.set_parent(&row_box_ref);
                 pop.set_autohide(true);
@@ -277,38 +311,58 @@ impl ShadhinSidebar {
                     .width_request(180)
                     .build();
 
-                let pin_btn = gtk4::Button::builder()
-                    .label("Pin / Unpin tab")
+                // 1. Reload Tab
+                let reload_btn = gtk4::Button::builder()
+                    .label("Reload Tab")
+                    .css_classes(["flat"])
+                    .halign(gtk4::Align::Fill)
+                    .build();
+                let pop_clone0 = pop.clone();
+                let reload_cb = on_reload_cb.clone();
+                reload_btn.connect_clicked(move |_| {
+                    pop_clone0.popdown();
+                    if let Some(ref cb) = *reload_cb.borrow() {
+                        cb(tab_idx);
+                    }
+                });
+                menu_vbox.append(&reload_btn);
+
+                // 2. Duplicate Tab
+                let dup_btn = gtk4::Button::builder()
+                    .label("Duplicate Tab")
                     .css_classes(["flat"])
                     .halign(gtk4::Align::Fill)
                     .build();
                 let pop_clone1 = pop.clone();
+                let dup_cb = on_dup_cb.clone();
+                dup_btn.connect_clicked(move |_| {
+                    pop_clone1.popdown();
+                    if let Some(ref cb) = *dup_cb.borrow() {
+                        cb(tab_idx);
+                    }
+                });
+                menu_vbox.append(&dup_btn);
+
+                // 3. Pin Tab / Unpin Tab
+                let pin_label = if is_pinned { "Unpin Tab" } else { "Pin Tab" };
+                let pin_btn = gtk4::Button::builder()
+                    .label(pin_label)
+                    .css_classes(["flat"])
+                    .halign(gtk4::Align::Fill)
+                    .build();
+                let pop_clone2 = pop.clone();
                 let pin_cb = on_pin_cb.clone();
                 pin_btn.connect_clicked(move |_| {
-                    pop_clone1.popdown();
+                    pop_clone2.popdown();
                     if let Some(ref cb) = *pin_cb.borrow() {
                         cb(tab_idx);
                     }
                 });
                 menu_vbox.append(&pin_btn);
 
-                let sleep_btn = gtk4::Button::builder()
-                    .label("Sleep tab")
-                    .css_classes(["flat"])
-                    .halign(gtk4::Align::Fill)
-                    .build();
-                let pop_clone2 = pop.clone();
-                let sleep_cb = on_sleep_cb.clone();
-                sleep_btn.connect_clicked(move |_| {
-                    pop_clone2.popdown();
-                    if let Some(ref cb) = *sleep_cb.borrow() {
-                        cb(tab_idx);
-                    }
-                });
-                menu_vbox.append(&sleep_btn);
-
+                // 4. Close Tab
                 let close_item = gtk4::Button::builder()
-                    .label("Close tab")
+                    .label("Close Tab")
                     .css_classes(["flat"])
                     .halign(gtk4::Align::Fill)
                     .build();
@@ -323,6 +377,7 @@ impl ShadhinSidebar {
                 menu_vbox.append(&close_item);
 
                 pop.set_child(Some(&menu_vbox));
+                *active_pop_ref.borrow_mut() = Some(pop.clone());
                 pop.popup();
             });
             row_box.add_controller(right_click);
