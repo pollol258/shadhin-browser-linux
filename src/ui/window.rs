@@ -52,7 +52,10 @@ pub struct TabUiItem {
     pub history_panel: HistoryPanel,
     pub storage: StorageService,
     pub error_box: gtk4::Box,
+    pub error_icon: gtk4::Image,
+    pub error_title: gtk4::Label,
     pub error_label: gtk4::Label,
+    pub retry_btn: gtk4::Button,
     pub tls_box: gtk4::Box,
     pub tls_host_label: gtk4::Label,
     pub tls_detail_label: gtk4::Label,
@@ -86,6 +89,8 @@ pub struct ShadhinWindow {
     tab_bar: adw::TabBar,
     tab_strip: Rc<ShadhinTabStrip>,
     sandbox_banner: adw::Banner,
+    memory_banner: adw::Banner,
+    toast_overlay: adw::ToastOverlay,
     find_bar: Rc<FindBar>,
     tab_manager: Rc<RefCell<TabManager>>,
     tab_items: Rc<RefCell<Vec<Rc<TabUiItem>>>>,
@@ -121,6 +126,8 @@ pub struct NavigationContext {
     pub download_mgr: DownloadManager,
     pub persistence_allowed: bool,
     pub sandbox_banner: adw::Banner,
+    pub memory_banner: adw::Banner,
+    pub toast_overlay: adw::ToastOverlay,
     pub pending_bare_domain_fallbacks: Rc<RefCell<std::collections::HashMap<TabId, String>>>,
     pub fallback_bar: gtk4::Box,
     pub fallback_target: Rc<RefCell<Option<(TabId, String)>>>,
@@ -261,6 +268,13 @@ impl ShadhinWindow {
             .revealed(false)
             .build();
 
+        // Real system memory pressure warning banner
+        let memory_banner = adw::Banner::builder()
+            .title("High system memory usage detected. Tabs can be suspended to free memory.")
+            .button_label("Free Memory")
+            .revealed(false)
+            .build();
+
         tab_view.set_hexpand(true);
         tab_view.set_vexpand(true);
 
@@ -341,10 +355,6 @@ impl ShadhinWindow {
             }
         });
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
-        let bb_changed = bookmarks_bar.clone();
-        toolbar.address_bar().connect_bookmark_changed(move || {
-            bb_changed.refresh();
-        });
         let current_workspace = Rc::new(RefCell::new("default".to_string()));
 
         // 5. Overlay Split View (Sidebar + Content)
@@ -422,6 +432,7 @@ impl ShadhinWindow {
         }
 
         root_box.append(&sandbox_banner);
+        root_box.append(&memory_banner);
         root_box.append(&split_view);
 
         // Tab layout configuration: "top" vs "vertical"
@@ -452,6 +463,46 @@ impl ShadhinWindow {
         toast_overlay.set_child(Some(&root_box));
         window.set_content(Some(&toast_overlay));
 
+        // Memory pressure banner click: Discard idle tabs and notify
+        let mb_click = memory_banner.clone();
+        let tm_mb = tab_manager.clone();
+        let toast_mb = toast_overlay.clone();
+        memory_banner.connect_button_clicked(move |_| {
+            tm_mb.borrow_mut().discard_idle_tabs(1, std::time::Duration::from_secs(30));
+            mb_click.set_revealed(false);
+            let toast = adw::Toast::new("Idle tabs suspended. Memory freed.");
+            toast.set_timeout(3);
+            toast_mb.add_toast(toast);
+        });
+
+        // Periodic system RAM monitoring via /proc/meminfo
+        let mb_poll = memory_banner.clone();
+        glib::timeout_add_seconds_local(15, move || {
+            if let Some(mem) = crate::platform::linux::memory::MemoryInfo::read_current() {
+                mb_poll.set_revealed(mem.is_under_pressure());
+            }
+            glib::ControlFlow::Continue
+        });
+
+        // Bookmark updated notification toast & bar refresh
+        let toast_ov_bm = toast_overlay.clone();
+        let bb_changed_toast = bookmarks_bar.clone();
+        toolbar.address_bar().connect_bookmark_changed(move || {
+            bb_changed_toast.refresh();
+            let toast = adw::Toast::new("Bookmark updated");
+            toast.set_timeout(2);
+            toast_ov_bm.add_toast(toast);
+        });
+
+        // Download started notification toast
+        let toast_ov_start = toast_overlay.clone();
+        download_mgr.add_start_listener(move |item| {
+            let toast = adw::Toast::new(&format!("Download started: {}", item.file_name));
+            toast.set_timeout(3);
+            toast_ov_start.add_toast(toast);
+        });
+
+        // Download completed notification toast
         let toast_ov = toast_overlay.clone();
         let win_for_dl = window.clone();
         download_mgr.add_completion_listener(move |item| {
@@ -550,6 +601,8 @@ impl ShadhinWindow {
             download_mgr: download_mgr.clone(),
             persistence_allowed,
             sandbox_banner: sandbox_banner.clone(),
+            memory_banner: memory_banner.clone(),
+            toast_overlay: toast_overlay.clone(),
             pending_bare_domain_fallbacks,
             fallback_bar: fallback_bar.clone(),
             fallback_target: fallback_target.clone(),
@@ -631,6 +684,8 @@ impl ShadhinWindow {
             tab_bar,
             tab_strip,
             sandbox_banner,
+            memory_banner,
+            toast_overlay,
             find_bar,
             tab_manager,
             tab_items,
@@ -995,7 +1050,10 @@ impl NavigationContext {
             history_panel,
             storage: self.storage.clone(),
             error_box,
+            error_icon,
+            error_title,
             error_label,
+            retry_btn: retry_btn.clone(),
             tls_box,
             tls_host_label,
             tls_detail_label,
@@ -1710,15 +1768,32 @@ impl NavigationContext {
             }
 
             tb_fail.set_is_loading(false);
-            page_fail.set_title("Connection Error");
             let mut tab = tab_c_fail.borrow_mut();
             tab.is_loading = false;
-            tab.title = "Connection Error".to_string();
+
+            let err_lower = error_msg.to_lowercase();
+            if err_lower.contains("network unreachable")
+                || err_lower.contains("no route to host")
+                || err_lower.contains("offline")
+            {
+                page_fail.set_title("Offline");
+                tab.title = "Offline".to_string();
+                ui_fail.error_icon.set_icon_name(Some("network-offline-symbolic"));
+                ui_fail.error_title.set_label("You Are Offline");
+                ui_fail.error_label.set_label(&format!(
+                    "Your computer is not connected to the internet.\nCheck your network connection and try again.\n\nFailed to load: {failing_uri}"
+                ));
+            } else {
+                page_fail.set_title("Server Not Found");
+                tab.title = "Server Not Found".to_string();
+                ui_fail.error_icon.set_icon_name(Some("network-error-symbolic"));
+                ui_fail.error_title.set_label("Server Not Found");
+                ui_fail.error_label.set_label(&format!(
+                    "Shadhin Browser could not establish a connection to {failing_uri}.\nThe site may be temporarily offline or experiencing high traffic.\n\nTechnical details: {error}"
+                ));
+            }
             drop(tab);
 
-            ui_fail
-                .error_label
-                .set_label(&format!("Could not connect to:\n{failing_uri}\n\n{error}"));
             ui_fail.stack.set_visible_child_name("error");
             true
         });
@@ -2039,10 +2114,14 @@ impl NavigationContext {
                 menu.append(&item_win);
 
                 let url_copy = link_str;
+                let toast_ov_copy = nav_cm.toast_overlay.clone();
                 let act_copy = gtk4::gio::SimpleAction::new("ctx-copy-link", None);
                 act_copy.connect_activate(move |_, _| {
                     if let Some(display) = gtk4::gdk::Display::default() {
                         display.clipboard().set_text(&url_copy);
+                        let toast = adw::Toast::new("Link copied to clipboard");
+                        toast.set_timeout(2);
+                        toast_ov_copy.add_toast(toast);
                     }
                 });
                 let item_copy = webkit6::ContextMenuItem::from_gaction(
@@ -2087,10 +2166,14 @@ impl NavigationContext {
                 menu.append(&item_copy_img);
 
                 let url_img_copy = img_str;
+                let toast_ov_img = nav_cm.toast_overlay.clone();
                 let act_copy_img_url = gtk4::gio::SimpleAction::new("ctx-copy-img-addr", None);
                 act_copy_img_url.connect_activate(move |_, _| {
                     if let Some(display) = gtk4::gdk::Display::default() {
                         display.clipboard().set_text(&url_img_copy);
+                        let toast = adw::Toast::new("Image address copied to clipboard");
+                        toast.set_timeout(2);
+                        toast_ov_img.add_toast(toast);
                     }
                 });
                 let item_copy_addr = webkit6::ContextMenuItem::from_gaction(
@@ -3734,6 +3817,16 @@ impl ShadhinWindow {
     /// Accessor to the sandbox status banner
     pub fn sandbox_banner(&self) -> &adw::Banner {
         &self.sandbox_banner
+    }
+
+    /// Accessor to the memory pressure warning banner
+    pub fn memory_banner(&self) -> &adw::Banner {
+        &self.memory_banner
+    }
+
+    /// Accessor to the main toast overlay
+    pub fn toast_overlay(&self) -> &adw::ToastOverlay {
+        &self.toast_overlay
     }
 
     /// Applies tab layout: "top" (top tab strip) vs "vertical" (collapsible sidebar)

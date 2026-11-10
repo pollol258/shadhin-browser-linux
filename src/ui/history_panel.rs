@@ -1,11 +1,13 @@
 use crate::storage::StorageService;
 use crate::storage::history::{HistoryGrouped, HistoryItem, HistoryRepository};
+use adw::prelude::*;
 use gtk4::gio;
-use gtk4::prelude::*;
+use gtk4::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::SystemTime;
 
+#[derive(Clone)]
 pub struct HistoryPanel {
     container: gtk4::Box,
     storage: StorageService,
@@ -44,7 +46,7 @@ impl HistoryPanel {
         header.append(&title);
 
         let clear_btn = gtk4::Button::builder()
-            .label("Clear History...")
+            .label("Clear History…")
             .css_classes(["flat", "destructive-action", "shadhin-nav-btn"])
             .build();
         header.append(&clear_btn);
@@ -52,7 +54,7 @@ impl HistoryPanel {
 
         // 2. Search Filter
         let search_entry = gtk4::SearchEntry::builder()
-            .placeholder_text("Search browsing history...")
+            .placeholder_text("Search browsing history…")
             .hexpand(true)
             .build();
         container.append(&search_entry);
@@ -79,6 +81,12 @@ impl HistoryPanel {
             on_open_url,
             list_container,
         };
+
+        // Connect real-time search filter
+        let panel_search = panel.clone();
+        search_entry.connect_search_changed(move |entry| {
+            panel_search.refresh(&entry.text());
+        });
 
         panel.wire_clear_button(&clear_btn);
         panel.refresh("");
@@ -237,6 +245,7 @@ impl HistoryPanel {
     fn wire_clear_button(&self, clear_btn: &gtk4::Button) {
         let storage_clear = self.storage.clone();
         let panel_box = self.container.clone();
+        let this_panel = self.clone();
 
         clear_btn.connect_clicked(move |_| {
             let storage = storage_clear.clone();
@@ -244,47 +253,42 @@ impl HistoryPanel {
                 .root()
                 .and_then(|r| r.downcast::<gtk4::Window>().ok());
 
-            let dialog = gtk4::AlertDialog::builder()
-                .message("Clear Browsing History")
-                .detail("Select the time range of browsing data to remove:")
-                .buttons(["Cancel", "Last Hour", "Last 24 Hours", "All Time"])
+            let dialog = adw::AlertDialog::builder()
+                .heading("Clear Browsing History")
+                .body("Select the time range of browsing data to remove from your local database:")
                 .build();
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("hour", "Last Hour");
+            dialog.add_response("day", "Last 24 Hours");
+            dialog.add_response("all", "All Time");
+            dialog.set_response_appearance("all", adw::ResponseAppearance::Destructive);
 
-            if let Some(win) = parent_win {
-                dialog.choose(Some(&win), None::<&gio::Cancellable>, move |choice| {
-                    if let Ok(idx) = choice {
-                        let now = SystemTime::now()
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs() as i64;
+            let refresh_panel = this_panel.clone();
+            dialog.choose(parent_win.as_ref(), None::<&gio::Cancellable>, move |resp| {
+                let now = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
 
-                        match idx {
-                            1 => {
-                                // Last hour
-                                storage.dispatch(move |db| {
-                                    let repo = HistoryRepository::new(db.conn());
-                                    let _ = repo.delete_range(now - 3600, now);
-                                });
-                            }
-                            2 => {
-                                // Last 24 hours
-                                storage.dispatch(move |db| {
-                                    let repo = HistoryRepository::new(db.conn());
-                                    let _ = repo.delete_range(now - 86400, now);
-                                });
-                            }
-                            3 => {
-                                // All time
-                                storage.dispatch(move |db| {
-                                    let repo = HistoryRepository::new(db.conn());
-                                    let _ = repo.delete_range(0, now);
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                });
-            }
+                let delete_task: Option<(i64, i64)> = match resp.as_str() {
+                    "hour" => Some((now - 3600, now)),
+                    "day" => Some((now - 86400, now)),
+                    "all" => Some((0, now)),
+                    _ => None,
+                };
+
+                if let Some((from_time, to_time)) = delete_task {
+                    let st = storage.clone();
+                    let rf = refresh_panel.clone();
+                    st.dispatch(move |db| {
+                        let repo = HistoryRepository::new(db.conn());
+                        let _ = repo.delete_range(from_time, to_time);
+                    });
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                        rf.refresh("");
+                    });
+                }
+            });
         });
     }
 }

@@ -258,6 +258,7 @@ struct DownloadManagerInner {
     active_downloads: HashMap<i64, ActiveDownloadEntry>,
     next_id: AtomicI64,
     listeners: Vec<Rc<dyn Fn(&DownloadItem)>>,
+    start_listeners: Vec<Rc<dyn Fn(&DownloadItem)>>,
     completion_listeners: Vec<Rc<dyn Fn(&DownloadItem)>>,
     attached_sessions: HashSet<usize>,
 }
@@ -281,6 +282,7 @@ impl DownloadManager {
                 active_downloads: HashMap::new(),
                 next_id: AtomicI64::new(1),
                 listeners: Vec::new(),
+                start_listeners: Vec::new(),
                 completion_listeners: Vec::new(),
                 attached_sessions: HashSet::new(),
             })),
@@ -442,6 +444,7 @@ impl DownloadManager {
 
         if let Some(ref item) = updated_item {
             self.notify_listeners(item);
+            self.notify_start(item);
 
             if persistence_allowed {
                 let url = item.url.clone();
@@ -783,6 +786,14 @@ impl DownloadManager {
         self.inner.borrow_mut().listeners.push(Rc::new(listener));
     }
 
+    /// Registers a listener for download start notifications
+    pub fn add_start_listener<F: Fn(&DownloadItem) + 'static>(&self, listener: F) {
+        self.inner
+            .borrow_mut()
+            .start_listeners
+            .push(Rc::new(listener));
+    }
+
     /// Registers a listener for completed download notifications
     pub fn add_completion_listener<F: Fn(&DownloadItem) + 'static>(&self, listener: F) {
         self.inner
@@ -808,6 +819,14 @@ impl DownloadManager {
 
     fn notify_listeners(&self, item: &DownloadItem) {
         let listeners: Vec<Rc<dyn Fn(&DownloadItem)>> = self.inner.borrow().listeners.clone();
+        for listener in listeners {
+            listener(item);
+        }
+    }
+
+    fn notify_start(&self, item: &DownloadItem) {
+        let listeners: Vec<Rc<dyn Fn(&DownloadItem)>> =
+            self.inner.borrow().start_listeners.clone();
         for listener in listeners {
             listener(item);
         }

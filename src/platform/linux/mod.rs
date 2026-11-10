@@ -2,6 +2,7 @@
 
 pub mod content_blocking;
 pub mod downloads;
+pub mod memory;
 pub mod permissions;
 pub mod sandbox;
 pub mod tls;

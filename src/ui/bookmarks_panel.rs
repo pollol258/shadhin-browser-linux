@@ -1,9 +1,12 @@
 use crate::storage::StorageService;
 use crate::storage::bookmarks::{BookmarkFolder, BookmarkItem, BookmarkRepository};
-use gtk4::prelude::*;
+use adw::prelude::*;
+use gtk4::gio;
+use gtk4::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(Clone)]
 pub struct BookmarksPanel {
     container: gtk4::Box,
     storage: StorageService,
@@ -51,13 +54,13 @@ impl BookmarksPanel {
         header.append(&new_folder_btn);
 
         let import_btn = gtk4::Button::builder()
-            .label("Import...")
+            .label("Import…")
             .css_classes(["flat", "shadhin-nav-btn"])
             .build();
         header.append(&import_btn);
 
         let export_btn = gtk4::Button::builder()
-            .label("Export...")
+            .label("Export…")
             .css_classes(["flat", "shadhin-nav-btn"])
             .build();
         header.append(&export_btn);
@@ -66,7 +69,7 @@ impl BookmarksPanel {
 
         // 2. Search Filter
         let search_entry = gtk4::SearchEntry::builder()
-            .placeholder_text("Search bookmarks...")
+            .placeholder_text("Search bookmarks…")
             .hexpand(true)
             .build();
         container.append(&search_entry);
@@ -313,32 +316,130 @@ impl BookmarksPanel {
     ) {
         let storage_folder = self.storage.clone();
         let panel_ref = self.container.clone();
+        let this_panel = self.clone();
+
         new_folder_btn.connect_clicked(move |_| {
-            // Folder creation prompt
             let storage = storage_folder.clone();
+            let parent_win = panel_ref.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+
+            let dialog = adw::AlertDialog::builder()
+                .heading("Create Bookmark Folder")
+                .body("Enter the name of the new bookmark folder:")
+                .build();
+
             let entry = gtk4::Entry::builder()
                 .placeholder_text("Folder name")
                 .build();
-            let dialog = gtk4::AlertDialog::builder()
-                .message("Create Bookmark Folder")
-                .detail("Enter the name of the new folder:")
-                .buttons(["Cancel", "Create"])
+            dialog.set_extra_child(Some(&entry));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("create", "Create");
+            dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+
+            let entry_clone = entry.clone();
+            let rf = this_panel.clone();
+            dialog.choose(parent_win.as_ref(), None::<&gio::Cancellable>, move |resp| {
+                if resp == "create" {
+                    let name = entry_clone.text().trim().to_string();
+                    if !name.is_empty() {
+                        let st = storage.clone();
+                        let rf_reload = rf.clone();
+                        st.dispatch(move |db| {
+                            let repo = BookmarkRepository::new(db.conn());
+                            let _ = repo.create_folder(&name, None);
+                        });
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                            rf_reload.refresh("");
+                        });
+                    }
+                }
+            });
+        });
+
+        // Wire search entry filter to refresh in real-time
+        let this_search = self.clone();
+        self.search_entry.connect_search_changed(move |entry| {
+            this_search.refresh(&entry.text());
+        });
+
+        // Wire Import Bookmarks
+        let storage_import = self.storage.clone();
+        let this_import = self.clone();
+        let panel_imp = self.container.clone();
+        import_btn.connect_clicked(move |_| {
+            let filter = gtk4::FileFilter::new();
+            filter.set_name(Some("Bookmark Files (*.html, *.json)"));
+            filter.add_pattern("*.html");
+            filter.add_pattern("*.htm");
+            filter.add_pattern("*.json");
+
+            let dialog = gtk4::FileDialog::builder()
+                .title("Import Bookmarks")
+                .modal(true)
+                .default_filter(&filter)
                 .build();
 
-            // Simple dialog action
-            let _ = (storage, entry, dialog, &panel_ref);
+            let parent_win = panel_imp.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            let st = storage_import.clone();
+            let rf = this_import.clone();
+            dialog.open(parent_win.as_ref(), None::<&gio::Cancellable>, move |res| {
+                if let Ok(file) = res
+                    && let Some(path) = file.path()
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                {
+                    let parsed = crate::storage::import_export::parse_netscape_html(&content)
+                        .or_else(|_| crate::storage::import_export::parse_json_bookmarks(&content));
+                    if let Ok(bookmarks) = parsed {
+                        let st_sub = st.clone();
+                        let rf_sub = rf.clone();
+                        st_sub.dispatch(move |db| {
+                            let repo = BookmarkRepository::new(db.conn());
+                            let _ = crate::storage::import_export::import_parsed_bookmarks(
+                                &repo,
+                                &bookmarks,
+                                true,
+                            );
+                        });
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(150),
+                            move || {
+                                rf_sub.refresh("");
+                            },
+                        );
+                    }
+                }
+            });
         });
 
-        // Wire search entry filter
-        let tree_box = self.tree_container.clone();
-        let storage_search = self.storage.clone();
-        let on_open_search = self.on_open_url.clone();
-        self.search_entry.connect_search_changed(move |entry| {
-            let filter = entry.text().to_string();
-            // Re-render
-            let _ = (&tree_box, &storage_search, &on_open_search, filter);
-        });
+        // Wire Export Bookmarks
+        let storage_export = self.storage.clone();
+        let panel_exp = self.container.clone();
+        export_btn.connect_clicked(move |_| {
+            let dialog = gtk4::FileDialog::builder()
+                .title("Export Bookmarks")
+                .initial_name("bookmarks.html")
+                .modal(true)
+                .build();
 
-        let _ = (import_btn, export_btn);
+            let parent_win = panel_exp.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            let st = storage_export.clone();
+            dialog.save(parent_win.as_ref(), None::<&gio::Cancellable>, move |res| {
+                if let Ok(file) = res
+                    && let Some(path) = file.path()
+                {
+                    st.query_async(
+                        move |db| {
+                            let repo = BookmarkRepository::new(db.conn());
+                            crate::storage::import_export::export_netscape_html(&repo)
+                                .unwrap_or_default()
+                        },
+                        move |html| {
+                            if !html.is_empty() {
+                                let _ = std::fs::write(&path, html);
+                            }
+                        },
+                    );
+                }
+            });
+        });
     }
 }
