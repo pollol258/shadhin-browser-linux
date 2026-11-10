@@ -37,3 +37,26 @@ strip = false
 [profile.dev]
 opt-level = 0
 debug = true
+
+[package.metadata.deb]
+maintainer = "Ziaur Rahman <ziaur@example.com>"
+depends = "$auto, libwebkitgtk-6.0-4, libgtk-4-1, libadwaita-1-0"
+section = "web"
+priority = "optional"
+assets = [
+    ["target/release/shadhin-browser", "usr/bin/", "755"],
+    ["data/com.shadhin.browser.desktop", "usr/share/applications/", "644"],
+    ["data/icons/hicolor/scalable/apps/com.shadhin.browser.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/shadhin-browser", dest = "/usr/bin/shadhin-browser", mode = "0755" },
+    { source = "data/com.shadhin.browser.desktop", dest = "/usr/share/applications/com.shadhin.browser.desktop", mode = "0644" },
+    { source = "data/icons/hicolor/scalable/apps/com.shadhin.browser.svg", dest = "/usr/share/icons/hicolor/scalable/apps/com.shadhin.browser.svg", mode = "0644" },
+]
+
+[package.metadata.generate-rpm.requires]
+"libwebkitgtk-6.0-4" = "*"
+"libgtk-4-1" = "*"
+"libadwaita-1-0" = "*"
