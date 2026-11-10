@@ -88,6 +88,10 @@ pub struct BrowserConfig {
     pub accent_color: String,
     #[serde(default = "default_tab_layout")]
     pub tab_layout: String,
+    #[serde(default)]
+    pub ask_download_location: bool,
+    #[serde(default)]
+    pub low_memory_mode: bool,
     pub privacy: PrivacyConfig,
 }
 
@@ -139,7 +143,7 @@ impl Default for BrowserConfig {
         let default_download = PathBuf::from(home).join("Downloads");
         Self {
             homepage: "about:newtab".to_string(),
-            search_engine_url: "https://duckduckgo.com/?q=%s".to_string(),
+            search_engine_url: "https://www.google.com/search?q=%s".to_string(),
             force_dark_theme: true,
             startup_behavior: "open_new_tab".to_string(),
             download_dir: default_download.to_string_lossy().to_string(),
@@ -148,6 +152,8 @@ impl Default for BrowserConfig {
             color_scheme: default_color_scheme(),
             accent_color: default_accent(),
             tab_layout: default_tab_layout(),
+            ask_download_location: false,
+            low_memory_mode: false,
             privacy: PrivacyConfig::default(),
         }
     }

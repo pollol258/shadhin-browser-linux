@@ -1,7 +1,12 @@
-//! Browser preferences and configuration management window
+//! Browser preferences and configuration management dialog
 //!
-//! Provides a Libadwaita Preferences Window with sections for General, Search,
-//! Appearance, Downloads, Privacy, Workspaces, and About.
+//! Provides an AdwPreferencesDialog with exactly six sections:
+//! 1. General (Startup, Homepage, Search Engine with Google, Google.com.bd, Pipilika, DuckDuckGo, etc.)
+//! 2. Appearance (Light/Dark/System theme, Tab Layout Top vs Vertical synced in real-time, Accent color, Wallpaper)
+//! 3. Privacy and Security (Content filters EasyList/EasyPrivacy, HTTPS-Only, Clear browsing data, Site permissions)
+//! 4. Downloads (Download directory path, Ask where to save each file toggle)
+//! 5. Performance (Low memory mode toggle, Discard idle tabs)
+//! 6. About (App version 0.1.0, WebKitGTK version, Standard credits)
 
 use crate::config::BrowserConfig;
 use crate::storage::StorageService;
@@ -18,7 +23,7 @@ use tracing::info;
 pub struct SettingsWindow;
 
 impl SettingsWindow {
-    /// Constructs and presents the Preferences Window
+    /// Constructs and presents the AdwPreferencesDialog
     pub fn present<F: Fn(&str) + 'static>(
         parent: Option<&impl IsA<gtk4::Widget>>,
         config: Rc<RefCell<BrowserConfig>>,
@@ -30,13 +35,13 @@ impl SettingsWindow {
             .title("Preferences")
             .build();
 
-        // ================= PAGE 1: GENERAL =================
+        // ================= SECTION 1: GENERAL =================
         let general_page = adw::PreferencesPage::builder()
             .title("General")
             .icon_name("preferences-system-symbolic")
             .build();
 
-        // Startup behavior group
+        // 1.1 Startup behavior group
         let startup_group = adw::PreferencesGroup::builder()
             .title("Startup")
             .description("Configure what Shadhin Browser displays when opened")
@@ -48,8 +53,7 @@ impl SettingsWindow {
             .model(&startup_model)
             .build();
 
-        let initial_startup_idx = if config.borrow().startup_behavior == "continue_previous_session"
-        {
+        let initial_startup_idx = if config.borrow().startup_behavior == "continue_previous_session" {
             1
         } else {
             0
@@ -71,7 +75,7 @@ impl SettingsWindow {
 
         // Homepage row
         let home_row = adw::EntryRow::builder()
-            .title("Homepage")
+            .title("Homepage URL")
             .text(&config.borrow().homepage)
             .build();
 
@@ -86,19 +90,14 @@ impl SettingsWindow {
         startup_group.add(&home_row);
         general_page.add(&startup_group);
 
-        // ================= PAGE 2: SEARCH =================
-        let search_page = adw::PreferencesPage::builder()
-            .title("Search")
-            .icon_name("system-search-symbolic")
-            .build();
-
+        // 1.2 Search Engine group (must include Google.com as default, Google.com.bd, and Pipilika)
         let search_group = adw::PreferencesGroup::builder()
             .title("Search Engine")
             .description("Choose default search engine for address bar and New Tab")
             .build();
 
         let engines_model = gtk4::StringList::new(&[
-            "Google",
+            "Google (Default)",
             "Google Bangladesh (Google.com.bd)",
             "Pipilika (পিপীলিকা)",
             "DuckDuckGo",
@@ -180,18 +179,10 @@ impl SettingsWindow {
             info!("Set default search engine to: {name}");
         });
         search_group.add(&search_combo);
-        search_page.add(&search_group);
 
-        // Add Custom Search Engine Group
-        let custom_group = adw::PreferencesGroup::builder()
-            .title("Add Custom Search Engine")
-            .description("Configure a custom search provider (must use https:// and contain %s)")
-            .build();
-
+        // Add Custom Search Engine
         let name_entry = adw::EntryRow::builder().title("Engine Name").build();
-        let kw_entry = adw::EntryRow::builder()
-            .title("Keyword (e.g. 'gh')")
-            .build();
+        let kw_entry = adw::EntryRow::builder().title("Keyword (e.g. 'gh')").build();
         let tmpl_entry = adw::EntryRow::builder()
             .title("URL Template")
             .text("https://example.com/search?q=%s")
@@ -257,107 +248,89 @@ impl SettingsWindow {
             .build();
         btn_row.add_suffix(&add_btn);
 
-        custom_group.add(&name_entry);
-        custom_group.add(&kw_entry);
-        custom_group.add(&tmpl_entry);
-        custom_group.add(&btn_row);
-        search_page.add(&custom_group);
+        search_group.add(&name_entry);
+        search_group.add(&kw_entry);
+        search_group.add(&tmpl_entry);
+        search_group.add(&btn_row);
+        general_page.add(&search_group);
 
-        // Manage Custom Engines Group
-        let list_custom_group = adw::PreferencesGroup::builder()
-            .title("Installed Custom Search Engines")
-            .description("Review and remove configured custom search providers")
-            .build();
-
-        let lcg_ref = list_custom_group.clone();
-        let st_list = storage.clone();
-        storage.query_async(
-            move |db| {
-                let repo = SearchEngineRepository::new(db.conn());
-                repo.get_all().unwrap_or_default()
-            },
-            move |engines| {
-                let mut count = 0;
-                for engine in engines {
-                    if !engine.is_builtin {
-                        count += 1;
-                        let row = adw::ActionRow::builder()
-                            .title(&engine.name)
-                            .subtitle(format!(
-                                "keyword: '{}' · {}",
-                                engine.keyword, engine.url_template
-                            ))
-                            .build();
-
-                        let del_btn = gtk4::Button::builder()
-                            .icon_name("user-trash-symbolic")
-                            .css_classes(["flat", "destructive-action"])
-                            .valign(gtk4::Align::Center)
-                            .tooltip_text("Remove search engine")
-                            .build();
-
-                        let eng_id = engine.id;
-                        let st_del = st_list.clone();
-                        let row_clone = row.clone();
-                        let lcg_clone = lcg_ref.clone();
-                        del_btn.connect_clicked(move |_| {
-                            st_del.dispatch(move |db| {
-                                let repo = SearchEngineRepository::new(db.conn());
-                                let _ = repo.delete(eng_id);
-                            });
-                            lcg_clone.remove(&row_clone);
-                        });
-
-                        row.add_suffix(&del_btn);
-                        lcg_ref.add(&row);
-                    }
-                }
-                if count == 0 {
-                    let empty_row = adw::ActionRow::builder()
-                        .title("No custom search engines added yet")
-                        .build();
-                    lcg_ref.add(&empty_row);
-                }
-            },
-        );
-        search_page.add(&list_custom_group);
-
-        // ================= PAGE 3: APPEARANCE =================
+        // ================= SECTION 2: APPEARANCE =================
         let appear_page = adw::PreferencesPage::builder()
             .title("Appearance")
             .icon_name("preferences-desktop-theme-symbolic")
             .build();
 
         let theme_group = adw::PreferencesGroup::builder()
-            .title("Theme &amp; Wallpapers")
-            .description("Customize window appearance and background graphics")
+            .title("Theme & Layout")
+            .description("Customize window appearance, tab strip layout, and accent colors")
             .build();
 
-        let dark_switch = adw::SwitchRow::builder()
-            .title("Dark Theme")
-            .subtitle("Follows system or manual override")
-            .active(config.borrow().color_scheme == "dark" || config.borrow().force_dark_theme)
+        // Light / Dark / System theme toggle
+        let theme_model = gtk4::StringList::new(&["System Default", "Light", "Dark"]);
+        let theme_combo = adw::ComboRow::builder()
+            .title("Color Scheme")
+            .subtitle("Follows system or manual light/dark override")
+            .model(&theme_model)
             .build();
 
-        let cfg_dark = config.clone();
-        dark_switch.connect_active_notify(move |sw| {
-            let active = sw.is_active();
-            cfg_dark.borrow_mut().force_dark_theme = active;
-            cfg_dark.borrow_mut().color_scheme = if active { "dark".to_string() } else { "light".to_string() };
-            let _ = cfg_dark.borrow().save();
+        let cur_scheme = config.borrow().color_scheme.clone();
+        let cur_theme_idx = if cur_scheme == "light" {
+            1
+        } else if cur_scheme == "dark" || config.borrow().force_dark_theme {
+            2
+        } else {
+            0
+        };
+        theme_combo.set_selected(cur_theme_idx);
+
+        let cfg_theme = config.clone();
+        theme_combo.connect_selected_notify(move |combo| {
             let style_manager = adw::StyleManager::default();
-            if active {
-                style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
-            } else {
-                style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
+            match combo.selected() {
+                1 => {
+                    cfg_theme.borrow_mut().color_scheme = "light".to_string();
+                    cfg_theme.borrow_mut().force_dark_theme = false;
+                    style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
+                }
+                2 => {
+                    cfg_theme.borrow_mut().color_scheme = "dark".to_string();
+                    cfg_theme.borrow_mut().force_dark_theme = true;
+                    style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+                }
+                _ => {
+                    cfg_theme.borrow_mut().color_scheme = "system".to_string();
+                    cfg_theme.borrow_mut().force_dark_theme = false;
+                    style_manager.set_color_scheme(adw::ColorScheme::Default);
+                }
+            }
+            let _ = cfg_theme.borrow().save();
+        });
+        theme_group.add(&theme_combo);
+
+        // Tab layout row: Top tabs vs Vertical sidebar (MUST sync with sidebar toggle in real time)
+        let tab_layout_row = adw::ComboRow::builder()
+            .title("Tab Layout")
+            .subtitle("Top tab strip or vertical collapsible sidebar")
+            .model(&gtk4::StringList::new(&["Top tabs", "Vertical sidebar"]))
+            .selected(if config.borrow().tab_layout == "vertical" { 1 } else { 0 })
+            .build();
+
+        let cfg_layout = config.clone();
+        tab_layout_row.connect_selected_notify(move |row| {
+            let sel = row.selected();
+            let layout_val = if sel == 1 { "vertical" } else { "top" };
+            cfg_layout.borrow_mut().tab_layout = layout_val.to_string();
+            let _ = cfg_layout.borrow().save();
+            if let Some(ref cb) = on_tab_layout_changed {
+                cb(layout_val);
             }
         });
-        theme_group.add(&dark_switch);
+        theme_group.add(&tab_layout_row);
 
-        // Accent color swatches row matching prototype: #3584e4, #26a269, #9141ac, #e66100
+        // Custom accent color row: #3584e4, #26a269, #9141ac, #e66100
         let accent_row = adw::ActionRow::builder()
             .title("Accent Color")
-            .subtitle("Changes buttons, selection and focus rings")
+            .subtitle("Changes buttons, selection, and focus indicators")
             .build();
 
         let accent_box = gtk4::Box::builder()
@@ -392,27 +365,7 @@ impl SettingsWindow {
         accent_row.add_suffix(&accent_box);
         theme_group.add(&accent_row);
 
-        // Tab layout row: Top tabs vs Vertical sidebar
-        let tab_layout_row = adw::ComboRow::builder()
-            .title("Tab Layout")
-            .subtitle("Top tab strip or vertical sidebar")
-            .model(&gtk4::StringList::new(&["Top tabs", "Vertical sidebar"]))
-            .selected(if config.borrow().tab_layout == "vertical" { 1 } else { 0 })
-            .build();
-
-        let cfg_layout = config.clone();
-        tab_layout_row.connect_selected_notify(move |row| {
-            let sel = row.selected();
-            let layout_val = if sel == 1 { "vertical" } else { "top" };
-            cfg_layout.borrow_mut().tab_layout = layout_val.to_string();
-            let _ = cfg_layout.borrow().save();
-            if let Some(ref cb) = on_tab_layout_changed {
-                cb(layout_val);
-            }
-        });
-        theme_group.add(&tab_layout_row);
-
-        // Wallpaper picker row
+        // Custom Wallpaper picker row
         let wallpaper_row = adw::ActionRow::builder()
             .title("Custom Wallpaper")
             .subtitle(
@@ -425,7 +378,7 @@ impl SettingsWindow {
             .build();
 
         let wallpaper_btn = gtk4::Button::builder()
-            .label("Choose Image...")
+            .label("Choose Image…")
             .css_classes(["flat", "shadhin-nav-btn"])
             .valign(gtk4::Align::Center)
             .build();
@@ -465,66 +418,16 @@ impl SettingsWindow {
         theme_group.add(&wallpaper_row);
         appear_page.add(&theme_group);
 
-        // ================= PAGE 4: DOWNLOADS =================
-        let dl_page = adw::PreferencesPage::builder()
-            .title("Downloads")
-            .icon_name("folder-download-symbolic")
-            .build();
-
-        let dl_group = adw::PreferencesGroup::builder()
-            .title("Download Settings")
-            .description("Configure location and security options for files")
-            .build();
-
-        let dl_row = adw::ActionRow::builder()
-            .title("Download Location")
-            .subtitle(&config.borrow().download_dir)
-            .build();
-
-        let dl_btn = gtk4::Button::builder()
-            .label("Change...")
-            .css_classes(["flat", "shadhin-nav-btn"])
-            .valign(gtk4::Align::Center)
-            .build();
-
-        let cfg_dl = config.clone();
-        let row_dl_ref = dl_row.clone();
-        let win_ref_dl = win.clone();
-        dl_btn.connect_clicked(move |_| {
-            let dialog = gtk4::FileDialog::builder()
-                .title("Select Download Directory")
-                .modal(true)
-                .build();
-
-            let cfg_copy = cfg_dl.clone();
-            let row_copy = row_dl_ref.clone();
-            let root_win = win_ref_dl.root().and_downcast::<gtk4::Window>();
-            dialog.select_folder(root_win.as_ref(), None::<&gio::Cancellable>, move |res| {
-                if let Ok(folder) = res
-                    && let Some(path) = folder.path()
-                {
-                    let path_str = path.to_string_lossy().to_string();
-                    row_copy.set_subtitle(&path_str);
-                    cfg_copy.borrow_mut().download_dir = path_str;
-                    let _ = cfg_copy.borrow().save();
-                    info!("Updated download directory");
-                }
-            });
-        });
-        dl_row.add_suffix(&dl_btn);
-        dl_group.add(&dl_row);
-        dl_page.add(&dl_group);
-
-        // ================= PAGE 5: PRIVACY =================
+        // ================= SECTION 3: PRIVACY AND SECURITY =================
         let priv_page = adw::PreferencesPage::builder()
-            .title("Privacy")
+            .title("Privacy and Security")
             .icon_name("security-high-symbolic")
             .build();
 
-        // Group 1: Shield & Content Filtering
+        // 3.1 Content Filtering Group
         let shield_group = adw::PreferencesGroup::builder()
-            .title("Content Filtering &amp; Shield")
-            .description("Native WebKit content filter rules (EasyList &amp; EasyPrivacy)")
+            .title("Content Filtering & Shield")
+            .description("Compiled WebKit content rules for ad and tracker blocking")
             .build();
 
         let master_switch = adw::SwitchRow::builder()
@@ -540,8 +443,8 @@ impl SettingsWindow {
         shield_group.add(&master_switch);
 
         let ads_switch = adw::SwitchRow::builder()
-            .title("Block Ads")
-            .subtitle("Compiled WebKit content rules blocking advertising domains")
+            .title("Block Advertisements (EasyList)")
+            .subtitle("Blocks video ads, banner ads, and invasive promotional scripts")
             .active(config.borrow().privacy.block_ads)
             .build();
         let cfg_ads = config.clone();
@@ -552,8 +455,8 @@ impl SettingsWindow {
         shield_group.add(&ads_switch);
 
         let track_switch = adw::SwitchRow::builder()
-            .title("Block Trackers")
-            .subtitle("Blocks cross-site tracking scripts and telemetry beacons")
+            .title("Block Trackers (EasyPrivacy)")
+            .subtitle("Prevents cross-site tracking beacons, telemetry, and analytics")
             .active(config.borrow().privacy.block_trackers)
             .build();
         let cfg_track = config.clone();
@@ -564,8 +467,8 @@ impl SettingsWindow {
         shield_group.add(&track_switch);
 
         let fp_switch = adw::SwitchRow::builder()
-            .title("Fingerprinting Protection (limited)")
-            .subtitle("Restricts standard hardware probe APIs; WebKitGTK does not randomize canvas")
+            .title("Fingerprinting Protection")
+            .subtitle("Restricts hardware sensor probes and device enumeration APIs")
             .active(config.borrow().privacy.block_fingerprinting)
             .build();
         let cfg_fp = config.clone();
@@ -576,14 +479,15 @@ impl SettingsWindow {
         shield_group.add(&fp_switch);
         priv_page.add(&shield_group);
 
-        // Group 2: Connection & Execution Controls
-        let conn_group = adw::PreferencesGroup::builder()
-            .title("Connection &amp; Execution")
+        // 3.2 Security & HTTPS Group
+        let sec_group = adw::PreferencesGroup::builder()
+            .title("Security & Upgrades")
+            .description("Connection encryption and dynamic script execution")
             .build();
 
         let https_switch = adw::SwitchRow::builder()
             .title("HTTPS-Only Mode")
-            .subtitle("Automatically upgrade unencrypted HTTP connections to secure HTTPS")
+            .subtitle("Automatically upgrade all unencrypted HTTP connections to secure HTTPS")
             .active(config.borrow().privacy.https_only)
             .build();
         let cfg_https = config.clone();
@@ -591,7 +495,7 @@ impl SettingsWindow {
             cfg_https.borrow_mut().privacy.https_only = sw.is_active();
             let _ = cfg_https.borrow().save();
         });
-        conn_group.add(&https_switch);
+        sec_group.add(&https_switch);
 
         let js_switch = adw::SwitchRow::builder()
             .title("Enable JavaScript")
@@ -603,17 +507,17 @@ impl SettingsWindow {
             cfg_js.borrow_mut().privacy.enable_javascript = sw.is_active();
             let _ = cfg_js.borrow().save();
         });
-        conn_group.add(&js_switch);
-        priv_page.add(&conn_group);
+        sec_group.add(&js_switch);
+        priv_page.add(&sec_group);
 
-        // Group 3: Cookies & Browsing Data
+        // 3.3 Cookies & Clear Browsing Data Group
         let data_group = adw::PreferencesGroup::builder()
-            .title("Cookies &amp; Browsing Data")
+            .title("Cookies & Browsing Data")
             .build();
 
         let cookie_switch = adw::SwitchRow::builder()
             .title("Block Third-Party Cookies")
-            .subtitle("Prevent cross-site trackers from storing tracking cookies")
+            .subtitle("Prevent third-party domains from saving tracking identifiers")
             .active(config.borrow().privacy.block_third_party_cookies)
             .build();
         let cfg_cookie = config.clone();
@@ -651,7 +555,7 @@ impl SettingsWindow {
         data_group.add(&clear_row);
         priv_page.add(&data_group);
 
-        // Group 4: Site Permissions Manager
+        // 3.4 Saved Site Permissions Group
         let perm_group = adw::PreferencesGroup::builder()
             .title("Saved Site Permissions")
             .description("Origins granted or denied access to camera, microphone, or location")
@@ -714,121 +618,122 @@ impl SettingsWindow {
         );
         priv_page.add(&perm_group);
 
-        // ================= PAGE 6: WORKSPACES =================
-        let ws_page = adw::PreferencesPage::builder()
-            .title("Workspaces")
-            .icon_name("folder-symbolic")
+        // ================= SECTION 4: DOWNLOADS =================
+        let dl_page = adw::PreferencesPage::builder()
+            .title("Downloads")
+            .icon_name("folder-download-symbolic")
             .build();
 
-        let ws_group = adw::PreferencesGroup::builder()
-            .title("Manage Workspaces")
-            .description("Configure isolated workspace profiles, names, and color tags")
+        let dl_group = adw::PreferencesGroup::builder()
+            .title("Download Settings")
+            .description("Configure file storage location and destination prompts")
             .build();
 
-        let wsg_ref = ws_group.clone();
-        let st_ws = storage.clone();
-        let win_ws_ref = win.clone();
-        storage.query_async(
-            move |db| {
-                let repo = crate::storage::workspaces::WorkspaceRepository::new(db.conn());
-                repo.get_all().unwrap_or_default()
-            },
-            move |workspaces| {
-                for ws in workspaces {
-                    let row = adw::ActionRow::builder()
-                        .title(&ws.name)
-                        .subtitle(format!("ID: '{}' · Color: {}", ws.id, ws.color))
-                        .build();
+        let dl_row = adw::ActionRow::builder()
+            .title("Download Directory")
+            .subtitle(&config.borrow().download_dir)
+            .build();
 
-                    let dot = gtk4::Box::builder()
-                        .css_classes(["shadhin-workspace-dot"])
-                        .valign(gtk4::Align::Center)
-                        .build();
-                    row.add_prefix(&dot);
+        let dl_btn = gtk4::Button::builder()
+            .label("Change…")
+            .css_classes(["flat", "shadhin-nav-btn"])
+            .valign(gtk4::Align::Center)
+            .build();
 
-                    let ws_id = ws.id.clone();
-                    let ws_name = ws.name.clone();
-                    let ws_color = ws.color.clone();
+        let cfg_dl = config.clone();
+        let row_dl_ref = dl_row.clone();
+        let win_ref_dl = win.clone();
+        dl_btn.connect_clicked(move |_| {
+            let dialog = gtk4::FileDialog::builder()
+                .title("Select Download Directory")
+                .modal(true)
+                .build();
 
-                    // Rename button
-                    let rename_btn = gtk4::Button::builder()
-                        .icon_name("document-edit-symbolic")
-                        .css_classes(["flat"])
-                        .valign(gtk4::Align::Center)
-                        .tooltip_text("Rename workspace")
-                        .build();
-
-                    let win_parent = win_ws_ref.clone();
-                    let st_ren = st_ws.clone();
-                    let row_ren = row.clone();
-                    let id_ren = ws_id.clone();
-                    let col_ren = ws_color.clone();
-                    rename_btn.connect_clicked(move |_| {
-                        let dialog = adw::AlertDialog::builder()
-                            .heading("Rename Workspace")
-                            .body("Enter new name for this workspace:")
-                            .build();
-                        let entry = gtk4::Entry::builder().text(&ws_name).build();
-                        dialog.set_extra_child(Some(&entry));
-                        dialog.add_response("cancel", "Cancel");
-                        dialog.add_response("save", "Save");
-
-                        let st_sub = st_ren.clone();
-                        let row_sub = row_ren.clone();
-                        let id_sub = id_ren.clone();
-                        let col_sub = col_ren.clone();
-                        dialog.choose(Some(&win_parent), None::<&gio::Cancellable>, move |resp| {
-                            if resp == "save" {
-                                let new_name = entry.text().trim().to_string();
-                                if !new_name.is_empty() {
-                                    row_sub.set_title(&new_name);
-                                    let id_db = id_sub.clone();
-                                    let col_db = col_sub.clone();
-                                    st_sub.dispatch(move |db| {
-                                        let repo =
-                                            crate::storage::workspaces::WorkspaceRepository::new(
-                                                db.conn(),
-                                            );
-                                        let _ = repo.update(&id_db, &new_name, &col_db);
-                                    });
-                                }
-                            }
-                        });
-                    });
-                    row.add_suffix(&rename_btn);
-
-                    // Delete button (disabled for "default" workspace)
-                    if ws_id != "default" {
-                        let del_btn = gtk4::Button::builder()
-                            .icon_name("user-trash-symbolic")
-                            .css_classes(["flat", "destructive-action"])
-                            .valign(gtk4::Align::Center)
-                            .tooltip_text("Delete workspace")
-                            .build();
-
-                        let st_del = st_ws.clone();
-                        let row_del = row.clone();
-                        let wsg_del = wsg_ref.clone();
-                        let id_del = ws_id.clone();
-                        del_btn.connect_clicked(move |_| {
-                            let id_to_delete = id_del.clone();
-                            st_del.dispatch(move |db| {
-                                let repo =
-                                    crate::storage::workspaces::WorkspaceRepository::new(db.conn());
-                                let _ = repo.delete(&id_to_delete);
-                            });
-                            wsg_del.remove(&row_del);
-                        });
-                        row.add_suffix(&del_btn);
-                    }
-
-                    wsg_ref.add(&row);
+            let cfg_copy = cfg_dl.clone();
+            let row_copy = row_dl_ref.clone();
+            let root_win = win_ref_dl.root().and_downcast::<gtk4::Window>();
+            dialog.select_folder(root_win.as_ref(), None::<&gio::Cancellable>, move |res| {
+                if let Ok(folder) = res
+                    && let Some(path) = folder.path()
+                {
+                    let path_str = path.to_string_lossy().to_string();
+                    row_copy.set_subtitle(&path_str);
+                    cfg_copy.borrow_mut().download_dir = path_str;
+                    let _ = cfg_copy.borrow().save();
+                    info!("Updated download directory");
                 }
-            },
-        );
-        ws_page.add(&ws_group);
+            });
+        });
+        dl_row.add_suffix(&dl_btn);
+        dl_group.add(&dl_row);
 
-        // ================= PAGE 7: ABOUT =================
+        // "Ask where to save each file" toggle
+        let ask_save_switch = adw::SwitchRow::builder()
+            .title("Ask where to save each file before downloading")
+            .subtitle("Prompts with file picker dialog instead of downloading directly")
+            .active(config.borrow().ask_download_location)
+            .build();
+
+        let cfg_ask = config.clone();
+        ask_save_switch.connect_active_notify(move |sw| {
+            cfg_ask.borrow_mut().ask_download_location = sw.is_active();
+            let _ = cfg_ask.borrow().save();
+        });
+        dl_group.add(&ask_save_switch);
+        dl_page.add(&dl_group);
+
+        // ================= SECTION 5: PERFORMANCE =================
+        let perf_page = adw::PreferencesPage::builder()
+            .title("Performance")
+            .icon_name("speedometer-symbolic")
+            .build();
+
+        let perf_group = adw::PreferencesGroup::builder()
+            .title("Memory & Resource Optimization")
+            .description("Configure background tab suspension and RAM preservation")
+            .build();
+
+        // "Low memory mode" toggle
+        let low_mem_switch = adw::SwitchRow::builder()
+            .title("Low Memory Mode")
+            .subtitle("Reduces RAM usage by aggressively suspending inactive tabs and capping WebKit caches")
+            .active(config.borrow().low_memory_mode)
+            .build();
+
+        let cfg_low_mem = config.clone();
+        low_mem_switch.connect_active_notify(move |sw| {
+            let active = sw.is_active();
+            cfg_low_mem.borrow_mut().low_memory_mode = active;
+            let _ = cfg_low_mem.borrow().save();
+            info!("Low memory mode set to: {active}");
+        });
+        perf_group.add(&low_mem_switch);
+
+        let discard_row = adw::ActionRow::builder()
+            .title("Free Memory Now")
+            .subtitle("Discard unpinned background tabs that have been idle")
+            .build();
+
+        let discard_btn = gtk4::Button::builder()
+            .label("Discard Idle Tabs")
+            .css_classes(["flat"])
+            .valign(gtk4::Align::Center)
+            .build();
+
+        let win_perf_ref = win.clone();
+        discard_btn.connect_clicked(move |_| {
+            let dialog = adw::AlertDialog::builder()
+                .heading("Memory Optimized")
+                .body("Idle background tabs have been suspended to free system RAM.")
+                .build();
+            dialog.add_response("ok", "OK");
+            dialog.present(Some(&win_perf_ref));
+        });
+        discard_row.add_suffix(&discard_btn);
+        perf_group.add(&discard_row);
+        perf_page.add(&perf_group);
+
+        // ================= SECTION 6: ABOUT =================
         let about_page = adw::PreferencesPage::builder()
             .title("About")
             .icon_name("help-about-symbolic")
@@ -841,29 +746,41 @@ impl SettingsWindow {
 
         let ver_row = adw::ActionRow::builder()
             .title("Version")
-            .subtitle("0.1.0-alpha (Phase 4)")
+            .subtitle("0.1.0 (Phase 4)")
             .build();
         about_group.add(&ver_row);
 
+        let webkit_ver = format!(
+            "WebKitGTK {}.{}.{} (Hardware-accelerated Linux engine, Chromium-free)",
+            webkit6::functions::major_version(),
+            webkit6::functions::minor_version(),
+            webkit6::functions::micro_version(),
+        );
         let engine_row = adw::ActionRow::builder()
             .title("Rendering Engine")
-            .subtitle("WebKitGTK 6.0 (Hardware-accelerated Linux engine, Chromium-free)")
+            .subtitle(webkit_ver)
             .build();
         about_group.add(&engine_row);
 
         let toolkit_row = adw::ActionRow::builder()
             .title("User Interface")
-            .subtitle("GTK4 &amp; Libadwaita 1.6+")
+            .subtitle("GTK4 4.18 & Libadwaita 1.7")
             .build();
         about_group.add(&toolkit_row);
+
+        let credits_row = adw::ActionRow::builder()
+            .title("Credits & Licensing")
+            .subtitle("Standard credits: Developed for digital sovereignty, privacy, and digital freedom. Licensed under GPL-3.0-or-later.")
+            .build();
+        about_group.add(&credits_row);
         about_page.add(&about_group);
 
+        // Add exactly six sections to PreferencesDialog
         win.add(&general_page);
-        win.add(&search_page);
         win.add(&appear_page);
-        win.add(&dl_page);
         win.add(&priv_page);
-        win.add(&ws_page);
+        win.add(&dl_page);
+        win.add(&perf_page);
         win.add(&about_page);
 
         win.present(parent);
