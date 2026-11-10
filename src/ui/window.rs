@@ -79,9 +79,13 @@ pub struct TabUiItem {
 }
 
 impl TabUiItem {
-    /// Explicitly cleans up child popovers and event listeners
+    /// Explicitly cleans up child popovers, detaches webview, and halts active loads
     pub fn cleanup(&self) {
         self.newtab.cleanup();
+        if let Some(wv) = self.webview.borrow_mut().take() {
+            wv.stop_loading();
+            self.stack.remove(&wv);
+        }
     }
 }
 
@@ -470,27 +474,6 @@ impl ShadhinWindow {
         toast_overlay.set_child(Some(&root_box));
         window.set_content(Some(&toast_overlay));
 
-        // Memory pressure banner click: Discard idle tabs and notify
-        let mb_click = memory_banner.clone();
-        let tm_mb = tab_manager.clone();
-        let toast_mb = toast_overlay.clone();
-        memory_banner.connect_button_clicked(move |_| {
-            tm_mb.borrow_mut().discard_idle_tabs(1, std::time::Duration::from_secs(30));
-            mb_click.set_revealed(false);
-            let toast = adw::Toast::new("Idle tabs suspended. Memory freed.");
-            toast.set_timeout(3);
-            toast_mb.add_toast(toast);
-        });
-
-        // Periodic system RAM monitoring via /proc/meminfo
-        let mb_poll = memory_banner.clone();
-        glib::timeout_add_seconds_local(15, move || {
-            if let Some(mem) = crate::platform::linux::memory::MemoryInfo::read_current() {
-                mb_poll.set_revealed(mem.is_under_pressure());
-            }
-            glib::ControlFlow::Continue
-        });
-
         // Bookmark updated notification toast & bar refresh
         let toast_ov_bm = toast_overlay.clone();
         let bb_changed_toast = bookmarks_bar.clone();
@@ -613,6 +596,42 @@ impl ShadhinWindow {
             pending_bare_domain_fallbacks,
             fallback_bar: fallback_bar.clone(),
             fallback_target: fallback_target.clone(),
+        });
+
+        // Memory pressure banner click: Discard idle tabs and purge in-memory cache
+        let mb_click = memory_banner.clone();
+        let nav_mb = nav_ctx.clone();
+        let toast_mb = toast_overlay.clone();
+        memory_banner.connect_button_clicked(move |_| {
+            let freed = nav_mb.discard_idle_tabs_and_free_ram(1, std::time::Duration::from_secs(15), true);
+            crate::browser::webview::trim_website_data_cache(&nav_mb.session.borrow());
+            mb_click.set_revealed(false);
+            let msg = if freed > 0 {
+                format!("{freed} idle tab(s) suspended. Memory freed.")
+            } else {
+                "Memory cache purged.".to_string()
+            };
+            let toast = adw::Toast::new(&msg);
+            toast.set_timeout(3);
+            toast_mb.add_toast(toast);
+        });
+
+        // Periodic system RAM monitoring via /proc/meminfo
+        let mb_poll = memory_banner.clone();
+        let nav_poll = nav_ctx.clone();
+        glib::timeout_add_seconds_local(15, move || {
+            if let Some(mem) = crate::platform::linux::memory::MemoryInfo::read_current() {
+                let is_low = mem.is_under_pressure();
+                mb_poll.set_revealed(is_low);
+                if is_low {
+                    let freed = nav_poll.discard_idle_tabs_and_free_ram(1, std::time::Duration::from_secs(45), true);
+                    crate::browser::webview::trim_website_data_cache(&nav_poll.session.borrow());
+                    if freed > 0 {
+                        tracing::info!("Auto-suspended {freed} background tabs due to system memory pressure");
+                    }
+                }
+            }
+            glib::ControlFlow::Continue
         });
 
         // Wire top TabBar '+' new tab button
@@ -2486,6 +2505,40 @@ impl NavigationContext {
             }
         }
     }
+
+    /// Discards idle background tabs and drops their WebView instances to free RAM.
+    pub fn discard_idle_tabs_and_free_ram(
+        &self,
+        threshold: usize,
+        min_idle: Duration,
+        is_low_memory: bool,
+    ) -> usize {
+        let discarded = self
+            .tab_manager
+            .borrow_mut()
+            .discard_idle_tabs_adaptive(threshold, min_idle, is_low_memory);
+
+        if discarded.is_empty() {
+            return 0;
+        }
+
+        let count = discarded.len();
+        let items = self.tab_items.borrow();
+        for &d_idx in &discarded {
+            if let Some(item) = items.get(d_idx) {
+                let old_wv = item.webview.borrow_mut().take();
+                if let Some(ref wv) = old_wv {
+                    wv.stop_loading();
+                    item.stack.remove(wv);
+                    info!("Discarded idle tab {d_idx} to free WebProcess RAM");
+                }
+            }
+        }
+        drop(items);
+
+        self.sync_tabs();
+        count
+    }
 }
 
 impl ShadhinWindow {
@@ -2731,25 +2784,30 @@ impl ShadhinWindow {
             sb_change.close_popover();
             if let Some(page) = tv.selected_page() {
                 let idx = tv.page_position(&page) as usize;
-                let mut tm = tm_change.borrow_mut();
-                tm.switch_tab(idx);
+                let prev_idx = tm_change.borrow().selected_index();
 
-                // Low-RAM tab discarding check: discard idle background tabs if > threshold
-                let discarded =
-                    tm.discard_idle_tabs(TAB_DISCARD_THRESHOLD, Duration::from_secs(300));
-                for d_idx in discarded {
+                // 1. Pause media in outgoing background tab
+                if prev_idx != idx {
                     let items = items_change.borrow();
-                    if let Some(item) = items.get(d_idx) {
-                        let old_wv = item.webview.borrow_mut().take();
-                        if let Some(ref wv) = old_wv {
-                            item.stack.remove(wv);
-                            info!("Removed active WebView for discarded tab {d_idx} to free WebProcess RAM");
-                        }
+                    if let Some(prev_item) = items.get(prev_idx)
+                        && let Some(ref wv) = *prev_item.webview.borrow()
+                    {
+                        crate::browser::webview::pause_media(wv);
                     }
                 }
+
+                let mut tm = tm_change.borrow_mut();
+                tm.switch_tab(idx);
                 drop(tm);
 
-                // Check if activated tab was discarded and needs WebView reconstruction
+                // 2. Adaptive tab discarding for background tabs
+                nav_change.discard_idle_tabs_and_free_ram(
+                    TAB_DISCARD_THRESHOLD,
+                    Duration::from_secs(300),
+                    false,
+                );
+
+                // 3. Check if activated tab was discarded and needs WebView reconstruction
                 let (needs_restore, target_url) = {
                     let items = items_change.borrow();
                     let needs = items
@@ -2770,6 +2828,11 @@ impl ShadhinWindow {
                     info!("Restoring discarded tab {idx} and reloading URL: {target_url}");
                     let webview = nav_change.setup_webview_for_tab(idx, &page);
                     webview.load_uri(&target_url);
+                    if let Some(tab_c) = tm_change.borrow().get_tab(idx) {
+                        let mut tab = tab_c.borrow_mut();
+                        tab.is_discarded = false;
+                        tab.has_active_webview = true;
+                    }
                 }
 
                 Self::sync_tabs_external(

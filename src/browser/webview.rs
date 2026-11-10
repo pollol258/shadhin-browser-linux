@@ -10,7 +10,83 @@
 //! - Never disables WebKit's process isolation or sandbox boundaries
 
 use std::env;
+use std::sync::Once;
 use webkit6::prelude::*;
+
+static MEMORY_SETTINGS_INIT: Once = Once::new();
+
+/// Configures WebKit's MemoryPressureSettings adaptively based on system RAM capacity.
+///
+/// Sets conservative and strict memory thresholds so that WebKit's MemoryPressureMonitor
+/// purges dead resources, font caches, image decoders, and triggers garbage collection
+/// BEFORE the system starts paging / swapping.
+pub fn configure_memory_pressure_settings() {
+    let mut settings = webkit6::MemoryPressureSettings::new();
+    let mem_info = crate::platform::linux::memory::MemoryInfo::read_current();
+
+    if let Some(mem) = mem_info {
+        let total_mb = mem.total_kb / 1024;
+        tracing::info!("Configuring WebKit MemoryPressureSettings for system with {total_mb} MB RAM");
+
+        if total_mb <= 8192 {
+            // Low-RAM profile (<= 8GB):
+            // Conservative thresholds to act early before swap thrashing.
+            // Order matters: WebKit asserts conservative < strict < kill.
+            settings.set_kill_threshold(0.95);
+            settings.set_strict_threshold(0.80);
+            settings.set_conservative_threshold(0.65);
+            settings.set_poll_interval(1.5);
+            settings.set_memory_limit(total_mb as u32);
+        } else if total_mb <= 16384 {
+            // Medium-RAM profile (8GB - 16GB):
+            // Balanced thresholds for active multitasking.
+            settings.set_kill_threshold(0.96);
+            settings.set_strict_threshold(0.85);
+            settings.set_conservative_threshold(0.70);
+            settings.set_poll_interval(2.0);
+            settings.set_memory_limit(total_mb as u32);
+        } else {
+            // High-RAM profile (> 16GB):
+            // Relaxed thresholds to avoid premature tab discarding.
+            settings.set_kill_threshold(0.98);
+            settings.set_strict_threshold(0.90);
+            settings.set_conservative_threshold(0.75);
+            settings.set_poll_interval(3.0);
+            settings.set_memory_limit(total_mb as u32);
+        }
+    } else {
+        // Fallback defaults
+        settings.set_kill_threshold(0.95);
+        settings.set_strict_threshold(0.85);
+        settings.set_conservative_threshold(0.70);
+        settings.set_poll_interval(2.0);
+    }
+
+    webkit6::NetworkSession::set_memory_pressure_settings(&mut settings);
+}
+
+/// Pauses any playing HTML5 audio or video elements in the WebView
+pub fn pause_media(webview: &webkit6::WebView) {
+    webview.evaluate_javascript(
+        "document.querySelectorAll('video, audio').forEach(function(el) { if (!el.paused) { el.pause(); } });",
+        None,
+        None,
+        None::<&gtk4::gio::Cancellable>,
+        |_| {},
+    );
+}
+
+/// Purges in-memory caches on the WebKit WebsiteDataManager to prevent unbounded RAM usage
+pub fn trim_website_data_cache(session: &webkit6::NetworkSession) {
+    if let Some(wdm) = session.website_data_manager() {
+        wdm.clear(
+            webkit6::WebsiteDataTypes::MEMORY_CACHE,
+            gtk4::glib::TimeSpan(0),
+            Option::<&gtk4::gio::Cancellable>::None,
+            |_| {},
+        );
+    }
+}
 
 /// Constructs a hardened `webkit6::Settings` instance adhering to Shadhin security policy
 pub fn create_hardened_settings(javascript_enabled: bool) -> webkit6::Settings {
@@ -101,6 +177,11 @@ pub fn create_configured_webview_with_session(
         configure_preferred_languages(&ctx);
     }
 
+    // Configure WebKit's MemoryPressureSettings adaptively
+    MEMORY_SETTINGS_INIT.call_once(|| {
+        configure_memory_pressure_settings();
+    });
+
     let settings = create_hardened_settings(javascript_enabled);
 
     let mut builder = webkit6::WebView::builder()
@@ -163,5 +244,25 @@ mod tests {
 
         let settings_no_js = create_hardened_settings(false);
         assert!(!settings_no_js.enables_javascript());
+    }
+
+    #[test]
+    fn test_memory_pressure_settings_order() {
+        let mut settings = webkit6::MemoryPressureSettings::new();
+        println!(
+            "Default conservative: {}, strict: {}, kill: {}",
+            settings.conservative_threshold(),
+            settings.strict_threshold(),
+            settings.kill_threshold()
+        );
+        settings.set_kill_threshold(0.95);
+        settings.set_strict_threshold(0.80);
+        settings.set_conservative_threshold(0.65);
+        println!(
+            "After setting - conservative: {}, strict: {}, kill: {}",
+            settings.conservative_threshold(),
+            settings.strict_threshold(),
+            settings.kill_threshold()
+        );
     }
 }

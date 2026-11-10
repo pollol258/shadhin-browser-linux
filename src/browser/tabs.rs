@@ -310,7 +310,26 @@ impl TabManager {
     /// Identifies and marks idle background tabs as discarded when tab count exceeds threshold.
     /// Returns indices of discarded tabs so the UI can drop their heavy WebView instances.
     pub fn discard_idle_tabs(&mut self, threshold: usize, min_idle: Duration) -> Vec<usize> {
-        if self.tabs.len() <= threshold {
+        self.discard_idle_tabs_adaptive(threshold, min_idle, false)
+    }
+
+    /// Discards background tabs adaptively based on memory pressure and idle duration.
+    /// Under low memory, discards any inactive background tab idle for min_idle (or 30s max),
+    /// regardless of whether tab count exceeds threshold.
+    pub fn discard_idle_tabs_adaptive(
+        &mut self,
+        threshold: usize,
+        min_idle: Duration,
+        is_low_memory: bool,
+    ) -> Vec<usize> {
+        let effective_threshold = if is_low_memory { 1 } else { threshold };
+        let effective_min_idle = if is_low_memory {
+            Duration::from_secs(30).min(min_idle)
+        } else {
+            min_idle
+        };
+
+        if self.tabs.len() <= effective_threshold {
             return Vec::new();
         }
 
@@ -328,7 +347,7 @@ impl TabManager {
                 continue;
             }
 
-            if now.duration_since(tab.last_active) >= min_idle {
+            if now.duration_since(tab.last_active) >= effective_min_idle {
                 tab.is_discarded = true;
                 tab.has_active_webview = false;
                 discarded_indices.push(idx);
@@ -485,6 +504,29 @@ mod tests {
 
         // Active tab must NOT be discarded
         assert!(!tm.active_tab().unwrap().borrow().is_discarded);
+    }
+
+    #[test]
+    fn test_discard_idle_tabs_adaptive_low_memory() {
+        let mut tm = TabManager::new();
+        // Create only 3 tabs (below regular threshold of 8)
+        for i in 0..3 {
+            tm.new_tab(Some(&format!("https://tab{i}.com")), None);
+        }
+        assert_eq!(tm.count(), 3);
+        assert_eq!(tm.selected_index(), 2);
+
+        // Under normal memory (false), threshold 5 -> 0 discarded
+        let normal = tm.discard_idle_tabs_adaptive(5, Duration::from_millis(0), false);
+        assert_eq!(normal.len(), 0);
+
+        // Under low memory (true), threshold 5 is overridden to 1 -> tabs 0 and 1 discarded
+        let low_mem = tm.discard_idle_tabs_adaptive(5, Duration::from_millis(0), true);
+        assert_eq!(low_mem.len(), 2);
+        assert_eq!(low_mem, vec![0, 1]);
+        assert!(tm.get_tab(0).unwrap().borrow().is_discarded);
+        assert!(tm.get_tab(1).unwrap().borrow().is_discarded);
+        assert!(!tm.get_tab(2).unwrap().borrow().is_discarded);
     }
 }
 

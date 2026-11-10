@@ -21,6 +21,22 @@ impl LinuxSandboxChecker {
     pub fn new() -> Self {
         Self
     }
+
+    /// Verifies if Linux unprivileged user namespaces are enabled by the kernel
+    pub fn is_unprivileged_userns_enabled() -> bool {
+        if let Ok(content) = fs::read_to_string("/proc/sys/kernel/unprivileged_userns_clone")
+            && content.trim() == "0"
+        {
+            return false;
+        }
+        if let Ok(content) = fs::read_to_string("/proc/sys/user/max_user_namespaces")
+            && let Ok(val) = content.trim().parse::<u64>()
+            && val == 0
+        {
+            return false;
+        }
+        true
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -117,9 +133,12 @@ impl SandboxChecker for LinuxSandboxChecker {
 
         let my_pid_ns = fs::read_link(format!("/proc/{my_pid}/ns/pid")).ok();
         let my_user_ns = fs::read_link(format!("/proc/{my_pid}/ns/user")).ok();
+        let my_mnt_ns = fs::read_link(format!("/proc/{my_pid}/ns/mnt")).ok();
+        let my_net_ns = fs::read_link(format!("/proc/{my_pid}/ns/net")).ok();
 
         let mut found_web_process = false;
         let mut any_sandbox_active = false;
+        let mut unsandboxed_procs = Vec::new();
 
         for (&pid, proc) in &procs {
             // Check if process matches WebKitWebProcess or WebProcess
@@ -206,9 +225,11 @@ impl SandboxChecker for LinuxSandboxChecker {
                 break;
             }
 
-            // 4. Check namespace isolation
+            // 4. Check namespace isolation (pid, user, mount, or network namespace)
             let child_pid_ns = fs::read_link(format!("/proc/{pid}/ns/pid")).ok();
             let child_user_ns = fs::read_link(format!("/proc/{pid}/ns/user")).ok();
+            let child_mnt_ns = fs::read_link(format!("/proc/{pid}/ns/mnt")).ok();
+            let child_net_ns = fs::read_link(format!("/proc/{pid}/ns/net")).ok();
 
             let ns_isolated = match (&my_pid_ns, &child_pid_ns) {
                 (Some(parent), Some(child)) => parent != child,
@@ -216,12 +237,18 @@ impl SandboxChecker for LinuxSandboxChecker {
             } || match (&my_user_ns, &child_user_ns) {
                 (Some(parent), Some(child)) => parent != child,
                 _ => false,
+            } || match (&my_mnt_ns, &child_mnt_ns) {
+                (Some(parent), Some(child)) => parent != child,
+                _ => false,
+            } || match (&my_net_ns, &child_net_ns) {
+                (Some(parent), Some(child)) => parent != child,
+                _ => false,
             };
 
             if ns_isolated {
                 println!(
-                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} has isolated namespaces (pid_ns={:?}, user_ns={:?})",
-                    pid, child_pid_ns, child_user_ns
+                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} has isolated namespaces (pid_ns={:?}, user_ns={:?}, mnt_ns={:?}, net_ns={:?})",
+                    pid, child_pid_ns, child_user_ns, child_mnt_ns, child_net_ns
                 );
                 any_sandbox_active = true;
                 break;
@@ -239,13 +266,27 @@ impl SandboxChecker for LinuxSandboxChecker {
                 any_sandbox_active = true;
                 break;
             }
+
+            unsandboxed_procs.push((pid, proc.cmdline.clone(), proc.ppid, proc.seccomp));
         }
 
         if any_sandbox_active {
             println!("[SandboxChecker] Overall result: Active");
             PlatformSandboxStatus::Active
         } else if found_web_process {
-            println!("[SandboxChecker] Overall result: Inactive (WebKitWebProcess running with no detected sandbox)");
+            for (pid, cmdline, ppid, seccomp) in &unsandboxed_procs {
+                tracing::warn!(
+                    "[SandboxChecker] WebKit process PID {} is un-sandboxed! PPid: {}, Seccomp: {}, Cmdline: '{}'",
+                    pid, ppid, seccomp, cmdline
+                );
+                println!(
+                    "[SandboxChecker] WARNING: WebKit process PID {} is un-sandboxed! PPid: {}, Seccomp: {}, Cmdline: '{}'",
+                    pid, ppid, seccomp, cmdline
+                );
+            }
+            if !Self::is_unprivileged_userns_enabled() {
+                tracing::warn!("[SandboxChecker] Kernel unprivileged user namespaces are disabled!");
+            }
             PlatformSandboxStatus::Inactive
         } else {
             println!("[SandboxChecker] Overall result: NoChildProcessYet");
@@ -277,5 +318,12 @@ mod tests {
             status,
             PlatformSandboxStatus::Active | PlatformSandboxStatus::NoChildProcessYet
         ));
+    }
+
+    #[test]
+    fn test_unprivileged_userns_check() {
+        let enabled = LinuxSandboxChecker::is_unprivileged_userns_enabled();
+        println!("Unprivileged user namespaces enabled: {enabled}");
+        assert!(enabled);
     }
 }
