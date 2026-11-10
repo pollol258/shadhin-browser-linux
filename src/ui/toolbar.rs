@@ -28,14 +28,14 @@ pub struct ShadhinToolbar {
 }
 
 impl ShadhinToolbar {
-    /// Constructs a new 56px navigation toolbar matching prototype header
+    /// Constructs a new 50px navigation toolbar matching prototype header
     pub fn new() -> Self {
         let container = adw::HeaderBar::builder()
             .css_classes(["shadhin-header"])
             .show_title(true)
             .visible(true)
             .build();
-        container.set_size_request(-1, 56);
+        container.set_size_request(-1, 50);
 
         // --- 1. Left Cluster: Sidebar Toggle, Back, Forward ---
         let left_box = gtk4::Box::builder()
@@ -46,7 +46,7 @@ impl ShadhinToolbar {
             .build();
 
         let sidebar_icon = gtk4::Image::from_icon_name("view-sidebar-symbolic");
-        sidebar_icon.set_pixel_size(17);
+        sidebar_icon.set_pixel_size(16);
         let sidebar_toggle_btn = gtk4::Button::builder()
             .child(&sidebar_icon)
             .tooltip_text("Toggle tab sidebar")
@@ -54,11 +54,11 @@ impl ShadhinToolbar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        sidebar_toggle_btn.set_size_request(36, 36);
+        sidebar_toggle_btn.set_size_request(32, 32);
         left_box.append(&sidebar_toggle_btn);
 
         let back_icon = gtk4::Image::from_icon_name("go-previous-symbolic");
-        back_icon.set_pixel_size(17);
+        back_icon.set_pixel_size(16);
         let back_btn = gtk4::Button::builder()
             .child(&back_icon)
             .tooltip_text("Go back (Alt+Left)")
@@ -67,11 +67,11 @@ impl ShadhinToolbar {
             .sensitive(false)
             .visible(true)
             .build();
-        back_btn.set_size_request(36, 36);
+        back_btn.set_size_request(32, 32);
         left_box.append(&back_btn);
 
         let forward_icon = gtk4::Image::from_icon_name("go-next-symbolic");
-        forward_icon.set_pixel_size(17);
+        forward_icon.set_pixel_size(16);
         let forward_btn = gtk4::Button::builder()
             .child(&forward_icon)
             .tooltip_text("Go forward (Alt+Right)")
@@ -80,7 +80,7 @@ impl ShadhinToolbar {
             .sensitive(false)
             .visible(true)
             .build();
-        forward_btn.set_size_request(36, 36);
+        forward_btn.set_size_request(32, 32);
         left_box.append(&forward_btn);
 
         container.pack_start(&left_box);
@@ -89,7 +89,7 @@ impl ShadhinToolbar {
         let address_bar = Rc::new(AddressBar::new());
         let addr_widget = address_bar.widget();
         addr_widget.set_hexpand(true);
-        addr_widget.set_size_request(360, 38);
+        addr_widget.set_size_request(360, 35);
         addr_widget.set_visible(true);
 
         let center_clamp = adw::Clamp::builder()
@@ -116,14 +116,14 @@ impl ShadhinToolbar {
 
         // Downloads button with badge overlay
         let dl_icon = gtk4::Image::from_icon_name("folder-download-symbolic");
-        dl_icon.set_pixel_size(17);
+        dl_icon.set_pixel_size(16);
         let download_btn = gtk4::Button::builder()
             .child(&dl_icon)
             .tooltip_text("Downloads (Ctrl+J)")
             .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .build();
-        download_btn.set_size_request(36, 36);
+        download_btn.set_size_request(32, 32);
 
         let downloads_badge = gtk4::Label::builder()
             .css_classes(["count-badge"])
@@ -145,7 +145,7 @@ impl ShadhinToolbar {
             .always_show_arrow(false)
             .valign(gtk4::Align::Center)
             .build();
-        menu_btn.set_size_request(36, 36);
+        menu_btn.set_size_request(32, 32);
         right_box.append(&menu_btn);
 
         container.pack_end(&right_box);
@@ -241,7 +241,7 @@ impl ShadhinToolbar {
         let effective_width = if window_width >= 360 { window_width } else { 1280 };
         let target = ((effective_width as f64 * 0.58).round() as i32).clamp(360, 680);
         self.center_clamp.set_maximum_size(target);
-        self.address_bar.widget().set_size_request(target.min(460), 38);
+        self.address_bar.widget().set_size_request(target.min(460), 35);
     }
 
     /// Closes all open popovers (main menu, downloads, privacy, address suggestions)

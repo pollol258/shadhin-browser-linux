@@ -52,17 +52,17 @@ entry:focus {
   outline-offset: 2px;
 }
 
-/* --- Header Bar (56px) --- */
+/* --- Header Bar (50px) --- */
 .shadhin-header {
-  min-height: 56px;
+  min-height: 50px;
   background-color: @headerbar_bg;
   border-bottom: 1px solid @border_color;
-  padding: 0 14px;
+  padding: 0 10px;
 }
 
-/* --- Address Bar (Address Pill) --- */
+/* --- Address Bar (Address Pill, 35px) --- */
 .address-pill {
-  min-height: 38px;
+  min-height: 35px;
   min-width: 320px;
   background-color: @view_bg;
   border: 1px solid @border_color;
@@ -85,7 +85,7 @@ entry:focus {
   box-shadow: none;
   color: @text_color;
   padding: 0 6px;
-  min-height: 32px;
+  min-height: 28px;
 }
 
 .address-pill entry:focus,
@@ -94,10 +94,10 @@ entry:focus {
   box-shadow: none;
 }
 
-/* Compact circular icon buttons inside address pill (30x30px) */
+/* Compact circular icon buttons inside address pill (28x28px) */
 .address-pill button.iconbtn {
-  min-width: 30px;
-  min-height: 30px;
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
   border-radius: 999px;
   border: none;
@@ -116,11 +116,11 @@ entry:focus {
   background-color: @hover_bg;
 }
 
-/* --- Navigation & Icon Buttons (36x36px, radius 8px, 17px icon) --- */
+/* --- Navigation & Icon Buttons (32x32px, radius 8px, 16px icon) --- */
 button.iconbtn,
 .iconbtn > button {
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border-radius: 8px;
   border: none;
@@ -218,20 +218,20 @@ progressbar.shadhin-progress-bar progress {
   border-radius: 0;
 }
 
-/* --- Top Tab Strip (tabs 38px tall, radius 8px, min 120px, max 235px) --- */
+/* --- Top Tab Strip (tabs 34px tall, radius 8px, min 120px, max 235px) --- */
 .top-tab-strip,
 tabbar.shadhin-top-tab-bar {
-  min-height: 42px;
+  min-height: 38px;
   background-color: @headerbar_bg;
   border-bottom: 1px solid @border_color;
-  padding: 2px 8px;
+  padding: 2px 6px;
 }
 
 .top-tab-strip tab,
 tabbar tab {
-  min-height: 38px;
+  min-height: 34px;
   min-width: 120px;
-  padding: 0 9px;
+  padding: 0 8px;
   border-radius: 8px;
   color: @muted_text;
   margin: 0 2px;
@@ -239,7 +239,7 @@ tabbar tab {
 }
 
 tabbar tab.pinned {
-  min-width: 38px;
+  min-width: 34px;
   padding: 0 4px;
 }
 
@@ -253,6 +253,32 @@ tabbar tab:checked {
 .top-tab-strip tab:hover,
 tabbar tab:hover {
   background-color: @hover_bg;
+}
+
+/* Custom Tab Strip and Tab Items (34px tall) */
+.shadhin-tab-strip {
+  min-height: 38px;
+  padding: 2px 6px;
+}
+
+.shadhin-tab {
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+
+.shadhin-tab-close {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.shadhin-tab-new-btn {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
 }
 
 /* --- Vertical Tab Sidebar (235px) --- */

@@ -78,7 +78,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        lock_btn.set_size_request(30, 30);
+        lock_btn.set_size_request(28, 28);
         pill_box.append(&lock_btn);
 
         let entry = gtk4::Entry::builder()
@@ -101,7 +101,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        star_btn.set_size_request(30, 30);
+        star_btn.set_size_request(28, 28);
         pill_box.append(&star_btn);
 
         let reader_icon = gtk4::Image::from_icon_name("view-reader-symbolic");
@@ -113,7 +113,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        reader_btn.set_size_request(30, 30);
+        reader_btn.set_size_request(28, 28);
         pill_box.append(&reader_btn);
 
         let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
@@ -125,7 +125,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        reload_btn.set_size_request(30, 30);
+        reload_btn.set_size_request(28, 28);
         pill_box.append(&reload_btn);
 
         container.append(&pill_box);

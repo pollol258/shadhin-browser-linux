@@ -172,12 +172,14 @@ impl ShadhinTabStrip {
 
             // Close button (x)
             let close_icon = gtk4::Image::from_icon_name("window-close-symbolic");
+            close_icon.set_pixel_size(14);
             let close_btn = gtk4::Button::builder()
                 .child(&close_icon)
                 .css_classes(["flat", "shadhin-tab-close"])
                 .valign(gtk4::Align::Center)
                 .tooltip_text("Close tab (Ctrl+W)")
                 .build();
+            close_btn.set_size_request(22, 22);
 
             let tv_close = self.tab_view.clone();
             let page_close = page.clone();

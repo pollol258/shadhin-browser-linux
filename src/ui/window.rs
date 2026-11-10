@@ -254,7 +254,7 @@ impl ShadhinWindow {
             .valign(gtk4::Align::Center)
             .margin_end(6)
             .build();
-        tab_bar_new_btn.set_size_request(32, 32);
+        tab_bar_new_btn.set_size_request(28, 28);
         tab_bar.set_end_action_widget(Some(&tab_bar_new_btn));
 
         // 2px load progress line directly under header
