@@ -327,6 +327,19 @@ impl ShadhinWindow {
         );
         apply_itp(&active_network_session.borrow(), true);
 
+        if !is_private {
+            let session = active_network_session.borrow();
+            let is_ephem = session.is_ephemeral();
+            tracing::info!(
+                "Session Persistence Audit: persistent=true, is_ephemeral={}, data_dir={:?}, cache_dir={:?}",
+                is_ephem,
+                session_mgr.borrow().base_data_dir(),
+                session_mgr.borrow().base_cache_dir(),
+            );
+        } else {
+            tracing::info!("Session Persistence Audit: Private Browsing Mode (ephemeral=true)");
+        }
+
         let filter_manager = ContentFilterManager::new();
 
         let https_manager = Rc::new(RefCell::new(HttpsUpgradeManager::new()));
@@ -2289,6 +2302,24 @@ impl NavigationContext {
         // 12. Fullscreen
         webview.connect_enter_fullscreen(|_| false);
         webview.connect_leave_fullscreen(|_| false);
+
+        // 13. connect_authenticate (HTTP Authentication & Credential Saving Policy)
+        let cfg_auth = self.config.clone();
+        webview.connect_authenticate(move |_wv, auth_req| {
+            let offer_save = cfg_auth.borrow().privacy.offer_save_passwords;
+            auth_req.set_can_save_credentials(offer_save);
+            if let Some(mut proposed) = auth_req.proposed_credential() {
+                tracing::info!(
+                    "WebKit authentication challenge: proposed username={:?}, can_save={offer_save}",
+                    proposed.username()
+                );
+            } else {
+                tracing::info!(
+                    "WebKit authentication challenge received (can_save_credentials={offer_save})"
+                );
+            }
+            false
+        });
 
         webview
     }

@@ -6,5 +6,6 @@
 pub mod adblock;
 pub mod cookies;
 pub mod https_only;
+pub mod passwords;
 pub mod stats;
 pub mod tracker;

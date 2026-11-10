@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-use webkit6::NetworkSession;
+use webkit6::{CookiePersistentStorage, NetworkSession};
 
 /// Tab descriptor for lazy restoration
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +66,11 @@ impl SessionManager {
             }
         }
 
+        info!(
+            "SessionManager initialized: base_data_dir={:?}, base_cache_dir={:?}",
+            base_data_dir, base_cache_dir
+        );
+
         Self {
             storage,
             base_data_dir,
@@ -75,6 +80,16 @@ impl SessionManager {
             unclean_exit_detected,
             session_save_debounce: Debounce::new(),
         }
+    }
+
+    /// Returns reference to the base data directory
+    pub fn base_data_dir(&self) -> &Path {
+        &self.base_data_dir
+    }
+
+    /// Returns reference to the base cache directory
+    pub fn base_cache_dir(&self) -> &Path {
+        &self.base_cache_dir
     }
 
     /// Whether an unclean shutdown or crash was detected on launch
@@ -107,11 +122,47 @@ impl SessionManager {
         let cache_dir_str = cache_dir.to_str().map(|s| s.to_string());
 
         let session = NetworkSession::new(data_dir_str.as_deref(), cache_dir_str.as_deref());
+
+        // Audit non-ephemeral session persistence (Task 1)
+        debug_assert!(
+            !session.is_ephemeral(),
+            "Workspace NetworkSession must be persistent (non-ephemeral)"
+        );
+        if let Some(wdm) = session.website_data_manager() {
+            debug_assert!(
+                !wdm.is_ephemeral(),
+                "WebsiteDataManager must be persistent (non-ephemeral)"
+            );
+            info!(
+                "SessionManager: WebsiteDataManager persistence verified (is_ephemeral=false, base_data={:?}, base_cache={:?})",
+                wdm.base_data_directory(),
+                wdm.base_cache_directory()
+            );
+        }
+
+        // Configure persistent SQLite cookie storage so logins survive restarts
+        if let Some(cookie_mgr) = session.cookie_manager() {
+            let cookie_file = data_dir.join("cookies.sqlite");
+            if let Some(cookie_file_str) = cookie_file.to_str() {
+                cookie_mgr.set_persistent_storage(
+                    cookie_file_str,
+                    CookiePersistentStorage::Sqlite,
+                );
+                info!(
+                    "SessionManager: Attached persistent SQLite cookie storage for workspace '{}' at {:?}",
+                    workspace_id, cookie_file
+                );
+            }
+        }
+
+        // Enable persistent network credential storage
+        session.set_persistent_credential_storage_enabled(true);
+
         self.sessions
             .insert(workspace_id.to_string(), session.clone());
 
         info!(
-            "Initialized isolated NetworkSession for workspace '{}' at {:?}",
+            "Initialized isolated persistent NetworkSession for workspace '{}' at {:?}",
             workspace_id, data_dir
         );
 
@@ -250,5 +301,30 @@ mod tests {
 
         let _ = std::fs::remove_file(&lock_path);
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_ephemeral_contrast() {
+        if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
+            eprintln!("No display available, skipping WebKit session test");
+            return;
+        }
+        if gtk4::init().is_err() || gtk4::gdk::Display::default().is_none() {
+            eprintln!("No GTK display available, skipping WebKit session test");
+            return;
+        }
+
+        let ephemeral = NetworkSession::new_ephemeral();
+        assert!(ephemeral.is_ephemeral(), "Ephemeral session must report is_ephemeral == true");
+
+        let storage = StorageService::new_in_memory().unwrap();
+        let mut sm = SessionManager::new(storage);
+        let persistent = sm.get_or_create_workspace_session("test_workspace_audit");
+        assert!(!persistent.is_ephemeral(), "Workspace session must report is_ephemeral == false");
+        assert!(persistent.is_persistent_credential_storage_enabled());
+
+        if let Some(wdm) = persistent.website_data_manager() {
+            assert!(!wdm.is_ephemeral(), "WebsiteDataManager must report is_ephemeral == false");
+        }
     }
 }

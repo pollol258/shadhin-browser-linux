@@ -527,6 +527,61 @@ impl SettingsWindow {
         });
         data_group.add(&cookie_switch);
 
+        let cache_row = adw::ActionRow::builder()
+            .title("Clear Cached Web Content")
+            .subtitle("Free disk and memory cache without clearing cookies or logging out")
+            .build();
+
+        let cache_btn = gtk4::Button::builder()
+            .label("Clear Cache")
+            .valign(gtk4::Align::Center)
+            .build();
+
+        let sess_cache = session.clone();
+        let cache_btn_ref = cache_btn.clone();
+        cache_btn.connect_clicked(move |_| {
+            if let Some(ref s) = sess_cache
+                && let Some(wdm) = s.website_data_manager()
+            {
+                cache_btn_ref.set_sensitive(false);
+                cache_btn_ref.set_label("Clearing…");
+
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                let b_weak = cache_btn_ref.downgrade();
+
+                gtk4::glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+                    if rx.try_recv().is_ok() {
+                        if let Some(b) = b_weak.upgrade() {
+                            b.set_label("Cleared ✓");
+                            let b_reset = b.clone();
+                            gtk4::glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(1500),
+                                move || {
+                                    b_reset.set_sensitive(true);
+                                    b_reset.set_label("Clear Cache");
+                                },
+                            );
+                        }
+                        gtk4::glib::ControlFlow::Break
+                    } else {
+                        gtk4::glib::ControlFlow::Continue
+                    }
+                });
+
+                wdm.clear(
+                    webkit6::WebsiteDataTypes::DISK_CACHE
+                        | webkit6::WebsiteDataTypes::MEMORY_CACHE,
+                    gtk4::glib::TimeSpan(0),
+                    Option::<&gtk4::gio::Cancellable>::None,
+                    move |_| {
+                        let _ = tx.send(());
+                    },
+                );
+            }
+        });
+        cache_row.add_suffix(&cache_btn);
+        data_group.add(&cache_row);
+
         let clear_row = adw::ActionRow::builder()
             .title("Clear Browsing Data")
             .subtitle("Remove history, cookies, cache, and site permissions")
@@ -554,6 +609,42 @@ impl SettingsWindow {
         clear_row.add_suffix(&clear_btn);
         data_group.add(&clear_row);
         priv_page.add(&data_group);
+
+        // 3.4 Passwords & Logins Group
+        let pwd_group = adw::PreferencesGroup::builder()
+            .title("Passwords & Autofill")
+            .description("Credential storage and login prompt management")
+            .build();
+
+        let pwd_switch = adw::SwitchRow::builder()
+            .title("Offer to save passwords")
+            .subtitle("Prompt to store credentials and logins for visited websites")
+            .active(config.borrow().privacy.offer_save_passwords)
+            .build();
+        let cfg_pwd = config.clone();
+        pwd_switch.connect_active_notify(move |sw| {
+            cfg_pwd.borrow_mut().privacy.offer_save_passwords = sw.is_active();
+            let _ = cfg_pwd.borrow().save();
+            tracing::info!(
+                "Offer to save passwords setting updated: {}",
+                sw.is_active()
+            );
+        });
+        pwd_group.add(&pwd_switch);
+
+        let keyring_row = adw::ActionRow::builder()
+            .title("Keyring Integration")
+            .subtitle("Desktop Secret Service (org.freedesktop.secrets)")
+            .build();
+        let keyring_badge = gtk4::Label::builder()
+            .label("Active")
+            .css_classes(["caption", "dim-label"])
+            .valign(gtk4::Align::Center)
+            .build();
+        keyring_row.add_suffix(&keyring_badge);
+        pwd_group.add(&keyring_row);
+
+        priv_page.add(&pwd_group);
 
         // 3.4 Saved Site Permissions Group
         let perm_group = adw::PreferencesGroup::builder()

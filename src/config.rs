@@ -106,10 +106,16 @@ pub struct PrivacyConfig {
     pub https_mode: String,
     pub block_third_party_cookies: bool,
     pub enable_javascript: bool,
+    #[serde(default = "default_offer_save_passwords")]
+    pub offer_save_passwords: bool,
 }
 
 fn default_https_mode() -> String {
     "prefer".to_string()
+}
+
+fn default_offer_save_passwords() -> bool {
+    true
 }
 
 impl Default for PrivacyConfig {
@@ -123,6 +129,7 @@ impl Default for PrivacyConfig {
             https_mode: default_https_mode(),
             block_third_party_cookies: true,
             enable_javascript: true,
+            offer_save_passwords: true,
         }
     }
 }
@@ -423,6 +430,7 @@ mod tests {
         "#;
         let loaded_old: BrowserConfig = toml::from_str(old_toml).expect("Deserialize old config");
         assert_eq!(loaded_old.sidebar_state, SidebarState::Expanded);
+        assert!(loaded_old.privacy.offer_save_passwords);
     }
 
     #[test]

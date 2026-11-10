@@ -141,7 +141,7 @@ fn test_live_security_and_network_targets() {
         true // Handled: prevent silent load and prevent HTTP fallback
     });
     let l_exp_to = l_exp.clone();
-    glib::timeout_add_local_once(Duration::from_secs(8), move || l_exp_to.quit());
+    glib::timeout_add_local_once(Duration::from_secs(15), move || l_exp_to.quit());
     wv_exp.load_uri("https://expired.badssl.com");
     l_exp.run();
     assert!(*tls_exp_fired.borrow(), "TLS error callback must fire for expired cert");
@@ -173,7 +173,7 @@ fn test_live_security_and_network_targets() {
         true
     });
     let l_self_to = l_self.clone();
-    glib::timeout_add_local_once(Duration::from_secs(8), move || l_self_to.quit());
+    glib::timeout_add_local_once(Duration::from_secs(15), move || l_self_to.quit());
     wv_self.load_uri("https://self-signed.badssl.com");
     l_self.run();
     assert!(*tls_self_fired.borrow(), "TLS error callback must fire for self-signed cert");
@@ -205,7 +205,7 @@ fn test_live_security_and_network_targets() {
         true
     });
     let l_wrong_to = l_wrong.clone();
-    glib::timeout_add_local_once(Duration::from_secs(8), move || l_wrong_to.quit());
+    glib::timeout_add_local_once(Duration::from_secs(15), move || l_wrong_to.quit());
     wv_wrong.load_uri("https://wrong.host.badssl.com");
     l_wrong.run();
     assert!(*tls_wrong_fired.borrow(), "TLS error callback must fire for wrong.host");

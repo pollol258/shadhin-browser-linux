@@ -31,6 +31,76 @@ pub fn is_dangerous_extension(filename: &str) -> bool {
     }
 }
 
+/// Scans the target directory and deletes orphaned temporary/partial download files (.crdownload, .part, .partial).
+pub fn cleanup_temp_downloads(download_dir: &Path) {
+    if !download_dir.is_dir() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(download_dir) {
+        Ok(e) => e,
+        Err(err) => {
+            warn!("Could not read download directory {:?} for temp cleanup: {err}", download_dir);
+            return;
+        }
+    };
+
+    let mut cleaned_count = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            let lower = file_name.to_lowercase();
+            if lower.ends_with(".part")
+                || lower.ends_with(".crdownload")
+                || lower.ends_with(".partial")
+            {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    warn!("Failed to remove temporary download file {:?}: {e}", path);
+                } else {
+                    info!("Cleaned up orphaned temporary download file: {:?}", path);
+                    cleaned_count += 1;
+                }
+            }
+        }
+    }
+
+    if cleaned_count > 0 {
+        info!("Cleaned up {} temporary download file(s) in {:?}", cleaned_count, download_dir);
+    }
+}
+
+/// Cleans up any partial or temporary files on disk associated with a cancelled download.
+pub fn clean_download_partial_files(file_path: &Path) {
+    // 1. Remove the direct file if it exists and has partial content
+    if file_path.exists() && file_path.is_file() {
+        if let Err(e) = std::fs::remove_file(file_path) {
+            warn!("Failed to delete cancelled download file {:?}: {e}", file_path);
+        } else {
+            info!("Deleted cancelled download partial file: {:?}", file_path);
+        }
+    }
+
+    // 2. Check for common partial extension variants (e.g. filename.part, filename.crdownload, filename.partial)
+    let path_str = file_path.to_string_lossy();
+    let candidates = [
+        format!("{}.part", path_str),
+        format!("{}.crdownload", path_str),
+        format!("{}.partial", path_str),
+    ];
+
+    for candidate in &candidates {
+        let p = Path::new(candidate);
+        if p.exists() && p.is_file() {
+            if let Err(e) = std::fs::remove_file(p) {
+                warn!("Failed to delete cancelled partial download {:?}: {e}", p);
+            } else {
+                info!("Deleted cancelled partial download: {:?}", p);
+            }
+        }
+    }
+}
+
 /// Sanitizes a suggested filename to prevent directory traversal, control character injection,
 /// leading dots, and filesystem overflow, while preserving Unicode characters and file extensions.
 pub fn sanitize_download_filename(raw_name: &str) -> String {
@@ -285,6 +355,9 @@ impl DownloadManager {
         if !download_dir.exists() {
             let _ = std::fs::create_dir_all(&download_dir);
         }
+
+        // Clean up orphaned partial/temporary download files on startup
+        cleanup_temp_downloads(&download_dir);
 
         Self {
             inner: Rc::new(RefCell::new(DownloadManagerInner {
@@ -634,6 +707,7 @@ impl DownloadManager {
 
     fn update_on_failed(&self, id: i64, error: &glib::Error) {
         let mut failed_item = None;
+        let mut file_to_clean: Option<PathBuf> = None;
         let storage = self.inner.borrow().storage.clone();
 
         {
@@ -650,6 +724,7 @@ impl DownloadManager {
                 if is_cancelled {
                     entry.item.status = DownloadStatus::Cancelled;
                     entry.item.error = Some("Download cancelled".to_string());
+                    file_to_clean = Some(entry.item.file_path.clone());
                 } else {
                     let err_msg = error.message().to_string();
                     let is_interrupted = error.kind::<webkit6::NetworkError>()
@@ -685,6 +760,10 @@ impl DownloadManager {
             }
         }
 
+        if let Some(ref path) = file_to_clean {
+            clean_download_partial_files(path);
+        }
+
         if let Some(ref item) = failed_item {
             warn!(
                 "Download failed/cancelled: '{}' ({:?})",
@@ -698,6 +777,7 @@ impl DownloadManager {
     pub fn cancel_download(&self, id: i64) {
         let mut dl_to_cancel = None;
         let mut item_to_notify = None;
+        let mut file_to_clean: Option<PathBuf> = None;
         let storage = self.inner.borrow().storage.clone();
 
         {
@@ -711,6 +791,7 @@ impl DownloadManager {
                 entry.item.status = DownloadStatus::Cancelled;
                 entry.item.error = Some("Download cancelled by user".to_string());
                 dl_to_cancel = entry.webkit_download.clone();
+                file_to_clean = Some(entry.item.file_path.clone());
                 item_to_notify = Some(entry.item.clone());
 
                 if entry.persistence_allowed {
@@ -731,6 +812,10 @@ impl DownloadManager {
 
         if let Some(dl) = dl_to_cancel {
             dl.cancel();
+        }
+
+        if let Some(ref path) = file_to_clean {
+            clean_download_partial_files(path);
         }
 
         if let Some(ref item) = item_to_notify {
@@ -948,5 +1033,57 @@ mod tests {
         assert!(!is_dangerous_extension("document.pdf"));
         assert!(!is_dangerous_extension("notes.txt"));
         assert!(!is_dangerous_extension("archive.tar.gz"));
+    }
+
+    #[test]
+    fn test_cleanup_temp_downloads() {
+        let temp_dir = std::env::temp_dir().join(format!("shadhin_dl_temp_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let legitimate_file = temp_dir.join("report.pdf");
+        let part_file = temp_dir.join("large_video.mp4.part");
+        let crdownload_file = temp_dir.join("setup.iso.crdownload");
+        let partial_file = temp_dir.join("archive.zip.partial");
+
+        std::fs::write(&legitimate_file, b"legit content").unwrap();
+        std::fs::write(&part_file, b"partial content").unwrap();
+        std::fs::write(&crdownload_file, b"downloading...").unwrap();
+        std::fs::write(&partial_file, b"incomplete").unwrap();
+
+        assert!(legitimate_file.exists());
+        assert!(part_file.exists());
+        assert!(crdownload_file.exists());
+        assert!(partial_file.exists());
+
+        cleanup_temp_downloads(&temp_dir);
+
+        assert!(legitimate_file.exists(), "Legitimate completed files must be preserved");
+        assert!(!part_file.exists(), ".part temporary files must be deleted");
+        assert!(!crdownload_file.exists(), ".crdownload temporary files must be deleted");
+        assert!(!partial_file.exists(), ".partial temporary files must be deleted");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_clean_download_partial_files() {
+        let temp_dir = std::env::temp_dir().join(format!("shadhin_dl_cancel_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let target_file = temp_dir.join("file.zip");
+        let part_companion = temp_dir.join("file.zip.part");
+
+        std::fs::write(&target_file, b"halfway").unwrap();
+        std::fs::write(&part_companion, b"part").unwrap();
+
+        assert!(target_file.exists());
+        assert!(part_companion.exists());
+
+        clean_download_partial_files(&target_file);
+
+        assert!(!target_file.exists(), "Cancelled main file should be removed");
+        assert!(!part_companion.exists(), "Cancelled .part companion should be removed");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
