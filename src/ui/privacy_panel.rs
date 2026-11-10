@@ -15,6 +15,9 @@ pub struct PrivacyPopover {
     domain_label: gtk4::Label,
     site_switch: gtk4::Switch,
     site_status_label: gtk4::Label,
+    filter_status_label: gtk4::Label,
+    trackers_count_label: gtk4::Label,
+    trackers_box: gtk4::Box,
     on_private_window: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_clear_data: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_open_settings: Rc<RefCell<Option<Box<dyn Fn()>>>>,
@@ -106,6 +109,32 @@ impl PrivacyPopover {
         site_row.append(&site_switch);
 
         site_box.append(&site_row);
+
+        let filter_status_label = gtk4::Label::builder()
+            .label("Content Filter: Active")
+            .halign(gtk4::Align::Start)
+            .css_classes(["font-xs", "dim-label"])
+            .build();
+        site_box.append(&filter_status_label);
+
+        let trackers_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(6)
+            .margin_top(2)
+            .build();
+
+        let track_icon = gtk4::Image::from_icon_name("security-high-symbolic");
+        track_icon.set_pixel_size(14);
+        trackers_box.append(&track_icon);
+
+        let trackers_count_label = gtk4::Label::builder()
+            .label("Trackers blocked: 0")
+            .halign(gtk4::Align::Start)
+            .css_classes(["font-xs"])
+            .build();
+        trackers_box.append(&trackers_count_label);
+        site_box.append(&trackers_box);
+
         main_box.append(&site_box);
 
         // 3. Toggles Group
@@ -217,12 +246,15 @@ impl PrivacyPopover {
         let ots = on_toggle_site.clone();
         let cur_dom = current_domain.clone();
         let ssl = site_status_label.clone();
+        let fsl_clone = filter_status_label.clone();
         site_switch.connect_active_notify(move |sw| {
             let active = sw.is_active();
             if active {
                 ssl.set_label("Shield active on this site");
+                fsl_clone.set_label("Content Filter: Active");
             } else {
                 ssl.set_label("Shield off for this site");
+                fsl_clone.set_label("Content Filter: Disabled for this site");
             }
 
             if let Some(ref domain) = *cur_dom.borrow()
@@ -288,6 +320,9 @@ impl PrivacyPopover {
             domain_label,
             site_switch,
             site_status_label,
+            filter_status_label,
+            trackers_count_label,
+            trackers_box,
             on_private_window,
             on_clear_data,
             on_open_settings,
@@ -298,21 +333,48 @@ impl PrivacyPopover {
 
     /// Updates site-specific labels and switch state when the active tab navigates
     pub fn update_for_site(&self, domain_opt: Option<&str>, is_shield_enabled: bool) {
+        self.update_block_status(domain_opt, is_shield_enabled, 0, is_shield_enabled);
+    }
+
+    /// Updates site-specific block status and tracker counts based on real content filter
+    pub fn update_block_status(
+        &self,
+        domain_opt: Option<&str>,
+        is_shield_enabled: bool,
+        trackers_blocked: u32,
+        filter_active: bool,
+    ) {
         if let Some(domain) = domain_opt {
             *self.current_domain.borrow_mut() = Some(domain.to_string());
             self.domain_label.set_label(domain);
             self.site_switch.set_active(is_shield_enabled);
-            if is_shield_enabled {
+            if is_shield_enabled && filter_active {
                 self.site_status_label
                     .set_label("Shield active on this site");
+                self.filter_status_label
+                    .set_label("Content Filter: Active");
+            } else if !is_shield_enabled {
+                self.site_status_label
+                    .set_label("Shield off for this site");
+                self.filter_status_label
+                    .set_label("Content Filter: Disabled for this site");
             } else {
-                self.site_status_label.set_label("Shield off for this site");
+                self.site_status_label
+                    .set_label("Shield active (Filter paused)");
+                self.filter_status_label
+                    .set_label("Content Filter: Paused");
             }
+
+            self.trackers_count_label
+                .set_label(&format!("Trackers blocked: {trackers_blocked}"));
+            self.trackers_box.set_visible(true);
         } else {
             *self.current_domain.borrow_mut() = None;
             self.domain_label.set_label("No active site");
             self.site_status_label.set_label("Internal page");
+            self.filter_status_label.set_label("Content Filter: N/A");
             self.site_switch.set_active(true);
+            self.trackers_box.set_visible(false);
         }
     }
 

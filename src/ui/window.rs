@@ -1805,6 +1805,7 @@ impl NavigationContext {
         let ui_perm = ui_item.clone();
         let storage_perm = self.storage.clone();
         let wv_perm = webview.clone();
+        let nav_perm = self.clone();
         webview.connect_permission_request(move |_, req| {
             let (ptype, _) = identify_permission_request(req);
             let domain = wv_perm
@@ -1815,11 +1816,14 @@ impl NavigationContext {
             let ui_perm_async = ui_perm.clone();
             let req_async = req.clone();
             let domain_async = domain.clone();
+            let storage_async = storage_perm.clone();
+            let nav_async = nav_perm.clone();
 
+            let domain_query = domain_async.clone();
             storage_perm.query_async(
                 move |db| {
                     let repo = PermissionRepository::new(db.conn());
-                    repo.get_permission(&domain_async, ptype).unwrap_or(None)
+                    repo.get_permission(&domain_query, ptype).unwrap_or(None)
                 },
                 move |stored_state| match stored_state {
                     Some(PermissionState::Allow) => {
@@ -1862,8 +1866,89 @@ impl NavigationContext {
                         ui_perm_async
                             .permission_label
                             .set_label(&format!("{domain} wants to access your {p_name}"));
-                        *ui_perm_async.active_permission_request.borrow_mut() = Some(req_async);
-                        ui_perm_async.permission_revealer.set_reveal_child(true);
+                        *ui_perm_async.active_permission_request.borrow_mut() =
+                            Some(req_async.clone());
+
+                        let heading = format!("Allow \"{domain}\" to access your {p_name}?");
+                        let body = format!(
+                            "\"{}\" is requesting permission to access your {}. The default action is Deny.",
+                            domain, p_name
+                        );
+
+                        let dialog = adw::AlertDialog::builder()
+                            .heading(&heading)
+                            .body(&body)
+                            .build();
+
+                        let remember_check = gtk4::CheckButton::builder()
+                            .label("Remember this decision for this site")
+                            .active(true)
+                            .halign(gtk4::Align::Center)
+                            .margin_top(8)
+                            .build();
+                        dialog.set_extra_child(Some(&remember_check));
+
+                        dialog.add_response("deny", "Deny");
+                        dialog.add_response("allow", "Allow");
+
+                        // The default action must be "Deny".
+                        dialog.set_default_response(Some("deny"));
+                        // Close response (e.g. Escape or dialog dismissal) must be "Deny".
+                        dialog.set_close_response("deny");
+
+                        dialog
+                            .set_response_appearance("deny", adw::ResponseAppearance::Destructive);
+                        dialog
+                            .set_response_appearance("allow", adw::ResponseAppearance::Suggested);
+
+                        let domain_resp = domain_async.clone();
+                        let storage_resp = storage_async.clone();
+                        let persistence_allowed = nav_async.persistence_allowed;
+                        let req_resp = req_async;
+                        let ui_resp = ui_perm_async.clone();
+
+                        dialog.connect_response(None, move |_, response_id| {
+                            *ui_resp.active_permission_request.borrow_mut() = None;
+                            ui_resp.permission_revealer.set_reveal_child(false);
+                            let remember = remember_check.is_active();
+                            if response_id == "allow" {
+                                info!(
+                                    "Permission prompt: user ALLOWED {ptype:?} for {domain_resp} (remember={remember})"
+                                );
+                                if remember && persistence_allowed {
+                                    let host_to_save = domain_resp.clone();
+                                    storage_resp.dispatch(move |db| {
+                                        let repo = PermissionRepository::new(db.conn());
+                                        let _ = repo.set_permission(
+                                            &host_to_save,
+                                            ptype,
+                                            PermissionState::Allow,
+                                            persistence_allowed,
+                                        );
+                                    });
+                                }
+                                req_resp.allow();
+                            } else {
+                                info!(
+                                    "Permission prompt: user DENIED {ptype:?} for {domain_resp} (remember={remember})"
+                                );
+                                if remember && persistence_allowed {
+                                    let host_to_save = domain_resp.clone();
+                                    storage_resp.dispatch(move |db| {
+                                        let repo = PermissionRepository::new(db.conn());
+                                        let _ = repo.set_permission(
+                                            &host_to_save,
+                                            ptype,
+                                            PermissionState::Block,
+                                            persistence_allowed,
+                                        );
+                                    });
+                                }
+                                req_resp.deny();
+                            }
+                        });
+
+                        dialog.present(Some(&nav_async.window));
                     }
                 },
             );
@@ -2280,6 +2365,14 @@ impl NavigationContext {
                 self.toolbar.set_can_go_forward(active.can_go_forward);
                 self.toolbar.set_is_loading(active.is_loading);
                 self.toolbar.address_bar().set_progress(active.progress);
+                if let Some(host) = extract_host_from_uri(&active.url) {
+                    let shield_enabled = self.config.borrow().privacy.shield_enabled;
+                    self.toolbar
+                        .privacy_popover()
+                        .update_for_site(Some(&host), shield_enabled);
+                } else {
+                    self.toolbar.privacy_popover().update_for_site(None, true);
+                }
             }
 
             let items = self.tab_items.borrow();
@@ -3511,6 +3604,14 @@ impl ShadhinWindow {
         });
         self.window.add_action(&act_about);
 
+        // 13. Privacy Shield (win.privacy)
+        let tb_priv_action = self.toolbar.clone();
+        let act_priv = gio::SimpleAction::new("privacy", None);
+        act_priv.connect_activate(move |_, _| {
+            tb_priv_action.privacy_popover().toggle();
+        });
+        self.window.add_action(&act_priv);
+
         // Build and set PopoverMenu model on the main menu button
         let menu = Self::create_app_menu();
         self.toolbar.set_menu_model(&menu);
@@ -3547,6 +3648,7 @@ impl ShadhinWindow {
 
         // Section 4: Tools & Settings
         let section_tools = gio::Menu::new();
+        section_tools.append(Some("Privacy Shield"), Some("win.privacy"));
         section_tools.append(
             Some("Clear Browsing Data…"),
             Some("win.clear-browsing-data"),
