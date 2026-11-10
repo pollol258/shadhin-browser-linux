@@ -331,7 +331,14 @@ impl ShadhinWindow {
 
         let tb_resize = toolbar.clone();
         window.connect_default_width_notify(move |win| {
-            tb_resize.update_address_pill_width(win.width());
+            let w = if win.width() > 0 {
+                win.width()
+            } else if win.default_width() > 0 {
+                win.default_width()
+            } else {
+                1280
+            };
+            tb_resize.update_address_pill_width(w);
         });
 
         let tb_blur = toolbar.clone();
@@ -396,6 +403,7 @@ impl ShadhinWindow {
         root_box.append(&load_line);
         root_box.append(&fallback_bar);
         root_box.append(&tab_bar);
+        bookmarks_bar.widget().set_visible(true);
         root_box.append(bookmarks_bar.widget());
         root_box.append(find_bar.widget());
 

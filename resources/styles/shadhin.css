@@ -63,6 +63,7 @@ entry:focus {
 /* --- Address Bar (39px pill, radius 999px) --- */
 .address-pill {
   min-height: 39px;
+  min-width: 320px;
   background-color: @view_bg;
   border: 1px solid @border_color;
   border-radius: 999px;
@@ -428,5 +429,31 @@ progressbar.shadhin-progress progress {
 .address-group {
   margin: 0;
   padding: 0;
+}
+
+/* --- Bookmarks Bar (32px tall beneath toolbar) --- */
+.shadhin-bookmarks-bar {
+  min-height: 32px;
+  background-color: @headerbar_bg;
+  border-bottom: 1px solid @border_color;
+  padding: 2px 14px;
+}
+
+.shadhin-bookmarks-bar-chip {
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: @text_color;
+  font-size: 12px;
+}
+
+.shadhin-bookmarks-bar-chip:hover {
+  background-color: @hover_bg;
+}
+
+.shadhin-bookmarks-bar-empty {
+  color: @muted_text;
+  font-size: 12px;
+  font-style: italic;
 }
 

@@ -23,20 +23,32 @@ impl BookmarksBar {
             .spacing(6)
             .css_classes(["shadhin-bookmarks-bar"])
             .hexpand(true)
+            .valign(gtk4::Align::Center)
             .visible(true)
             .build();
+        container.set_size_request(-1, 32);
 
         let folder_icon = gtk4::Image::from_icon_name("user-bookmarks-symbolic");
         folder_icon.set_pixel_size(14);
         folder_icon.set_opacity(0.7);
+        folder_icon.set_visible(true);
         container.append(&folder_icon);
 
         let chips_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
             .hexpand(true)
+            .visible(true)
             .build();
         container.append(&chips_box);
+
+        // Pre-populate with default empty label so bar is never zero-height or invisible before DB query returns
+        let empty_lbl = gtk4::Label::builder()
+            .label("No bookmarks yet (Ctrl+D to bookmark)")
+            .css_classes(["shadhin-bookmarks-bar-empty"])
+            .visible(true)
+            .build();
+        chips_box.append(&empty_lbl);
 
         let on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
@@ -85,6 +97,7 @@ impl BookmarksBar {
                     let empty_lbl = gtk4::Label::builder()
                         .label("No bookmarks yet (Ctrl+D to bookmark)")
                         .css_classes(["shadhin-bookmarks-bar-empty"])
+                        .visible(true)
                         .build();
                     chips.append(&empty_lbl);
                     return;
@@ -94,15 +107,18 @@ impl BookmarksBar {
                     let btn = gtk4::Button::builder()
                         .css_classes(["flat", "shadhin-bookmarks-bar-chip"])
                         .tooltip_text(&item.url)
+                        .visible(true)
                         .build();
 
                     let row = gtk4::Box::builder()
                         .orientation(gtk4::Orientation::Horizontal)
                         .spacing(4)
+                        .visible(true)
                         .build();
 
                     let icon = gtk4::Image::from_icon_name("text-html-symbolic");
                     icon.set_pixel_size(14);
+                    icon.set_visible(true);
                     row.append(&icon);
 
                     let title = if item.title.is_empty() {
@@ -115,6 +131,7 @@ impl BookmarksBar {
                         .label(&title)
                         .ellipsize(gtk4::pango::EllipsizeMode::End)
                         .max_width_chars(16)
+                        .visible(true)
                         .build();
                     row.append(&lbl);
 

@@ -53,6 +53,7 @@ impl AddressBar {
             .orientation(gtk4::Orientation::Vertical)
             .hexpand(true)
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
 
         // 1. Pill horizontal box
@@ -62,6 +63,7 @@ impl AddressBar {
             .css_classes(["address-pill"])
             .hexpand(true)
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
 
         let shield_icon = gtk4::Image::from_icon_name("security-low-symbolic");
@@ -71,6 +73,7 @@ impl AddressBar {
             .tooltip_text("Site information and privacy")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
         pill_box.append(&lock_btn);
 
@@ -79,6 +82,7 @@ impl AddressBar {
             .tooltip_text("Address and search bar · Type a URL or search query")
             .hexpand(true)
             .css_classes(["shadhin-address-entry"])
+            .visible(true)
             .build();
         entry.update_property(&[gtk4::accessible::Property::Label("Address and search bar")]);
         pill_box.append(&entry);
@@ -90,6 +94,7 @@ impl AddressBar {
             .tooltip_text("Bookmark this page (Ctrl+D)")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
         pill_box.append(&star_btn);
 
@@ -100,6 +105,7 @@ impl AddressBar {
             .tooltip_text("Reader mode")
             .css_classes(["iconbtn", "flat"])
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
         pill_box.append(&reader_btn);
 

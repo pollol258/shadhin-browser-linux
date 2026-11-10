@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 pub struct ShadhinToolbar {
     container: adw::HeaderBar,
+    center_clamp: adw::Clamp,
     back_btn: gtk4::Button,
     forward_btn: gtk4::Button,
     reload_btn: gtk4::Button,
@@ -34,7 +35,8 @@ impl ShadhinToolbar {
     pub fn new() -> Self {
         let container = adw::HeaderBar::builder()
             .css_classes(["shadhin-header"])
-            .show_title(false)
+            .show_title(true)
+            .visible(true)
             .build();
         container.set_size_request(-1, 56);
 
@@ -43,6 +45,7 @@ impl ShadhinToolbar {
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
 
         let sidebar_icon = gtk4::Image::from_icon_name("view-sidebar-symbolic");
@@ -52,6 +55,7 @@ impl ShadhinToolbar {
             .tooltip_text("Toggle tab sidebar")
             .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
         sidebar_toggle_btn.set_size_request(36, 36);
         left_box.append(&sidebar_toggle_btn);
@@ -64,6 +68,7 @@ impl ShadhinToolbar {
             .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .sensitive(false)
+            .visible(true)
             .build();
         back_btn.set_size_request(36, 36);
         left_box.append(&back_btn);
@@ -76,13 +81,14 @@ impl ShadhinToolbar {
             .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
             .sensitive(false)
+            .visible(true)
             .build();
         forward_btn.set_size_request(36, 36);
         left_box.append(&forward_btn);
 
         container.pack_start(&left_box);
 
-        // --- 2. Center: [reload/stop][address pill] in .address-group ---
+        // --- 2. Center: [reload/stop][address pill] wrapped in adw::Clamp ---
         let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
         reload_icon.set_pixel_size(17);
         let reload_btn = gtk4::Button::builder()
@@ -90,24 +96,38 @@ impl ShadhinToolbar {
             .tooltip_text("Reload page (Ctrl+R)")
             .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
         reload_btn.set_size_request(36, 36);
 
         let address_bar = Rc::new(AddressBar::new());
         let addr_widget = address_bar.widget();
+        addr_widget.set_hexpand(true);
         addr_widget.set_size_request(460, 39);
+        addr_widget.set_visible(true);
 
         let center_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
-            .halign(gtk4::Align::Center)
+            .halign(gtk4::Align::Fill)
             .valign(gtk4::Align::Center)
             .hexpand(true)
+            .visible(true)
             .css_classes(["address-group"])
             .build();
         center_box.append(&reload_btn);
         center_box.append(addr_widget);
-        container.set_title_widget(Some(&center_box));
+
+        let center_clamp = adw::Clamp::builder()
+            .maximum_size(680)
+            .tightening_threshold(360)
+            .hexpand(true)
+            .valign(gtk4::Align::Center)
+            .visible(true)
+            .build();
+        center_clamp.set_child(Some(&center_box));
+
+        container.set_title_widget(Some(&center_clamp));
 
         // Anchor Privacy Popover to the Lock button inside the Address Bar
         let privacy_popover = Rc::new(PrivacyPopover::new(address_bar.lock_button()));
@@ -117,6 +137,7 @@ impl ShadhinToolbar {
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
             .valign(gtk4::Align::Center)
+            .visible(true)
             .build();
 
         // Downloads button with badge overlay
@@ -202,6 +223,7 @@ impl ShadhinToolbar {
 
         Self {
             container,
+            center_clamp,
             back_btn,
             forward_btn,
             reload_btn,
@@ -247,8 +269,10 @@ impl ShadhinToolbar {
 
     /// Dynamically recalculates and sets address pill width: min(680px, 58vw)
     pub fn update_address_pill_width(&self, window_width: i32) {
-        let target = ((window_width as f64 * 0.58).round() as i32).clamp(360, 680);
-        self.address_bar.widget().set_size_request(target, 39);
+        let effective_width = if window_width >= 360 { window_width } else { 1280 };
+        let target = ((effective_width as f64 * 0.58).round() as i32).clamp(360, 680);
+        self.center_clamp.set_maximum_size(target);
+        self.address_bar.widget().set_size_request(target.min(460), 39);
     }
 
     /// Closes all open popovers (main menu, downloads, privacy, address suggestions)
