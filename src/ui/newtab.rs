@@ -1,7 +1,7 @@
 //! Native New Tab dashboard with search, shortcuts, and privacy statistics
 //!
-//! Hosts the centered DuckDuckGo search bar, SQLite-backed shortcut cards,
-//! recently visited sites, and the Privacy Shield statistics indicator.
+//! Hosts the centered search bar, SQLite-backed static shortcut cards with context menus,
+//! recently visited sites, and the Privacy Shield indicator.
 
 use crate::storage::StorageService;
 use crate::storage::history::{HistoryItem, HistoryRepository};
@@ -14,7 +14,7 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub struct ShadhinNewTab {
     scrolled_window: gtk4::ScrolledWindow,
-    shortcuts_box: gtk4::Box,
+    shortcuts_flow: gtk4::FlowBox,
     recent_box: gtk4::Box,
     on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     storage: Rc<RefCell<Option<StorageService>>>,
@@ -23,67 +23,89 @@ pub struct ShadhinNewTab {
 impl ShadhinNewTab {
     /// Constructs a new New Tab page component
     pub fn new() -> Self {
+        let clamp = adw::Clamp::builder()
+            .maximum_size(780)
+            .tightening_threshold(520)
+            .hexpand(true)
+            .valign(gtk4::Align::Start)
+            .halign(gtk4::Align::Fill)
+            .margin_top(40)
+            .margin_bottom(40)
+            .margin_start(20)
+            .margin_end(20)
+            .build();
+
         let container = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(20)
+            .spacing(28)
             .valign(gtk4::Align::Start)
-            .halign(gtk4::Align::Center)
-            .margin_top(32)
-            .margin_bottom(32)
-            .margin_start(16)
-            .margin_end(16)
+            .halign(gtk4::Align::Fill)
             .css_classes(["shadhin-newtab-container"])
             .build();
+        clamp.set_child(Some(&container));
 
         let scrolled_window = gtk4::ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
             .hexpand(true)
             .vexpand(true)
-            .child(&container)
+            .child(&clamp)
             .build();
 
         let on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
-        // 1. Shadhin Branding Logo
-        let logo_icon = gtk4::Image::from_icon_name("web-browser-symbolic");
-        logo_icon.set_pixel_size(64);
-        logo_icon.add_css_class("shadhin-brand-logo");
-        container.append(&logo_icon);
-
-        // 2. Title & Tagline
-        let title_box = gtk4::Box::builder()
+        // 1. Shadhin Branding Logo & Headings
+        let brand_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(4)
+            .spacing(10)
+            .halign(gtk4::Align::Center)
             .build();
+
+        let logo_icon = gtk4::Image::from_icon_name("web-browser-symbolic");
+        logo_icon.set_pixel_size(48);
+        logo_icon.set_halign(gtk4::Align::Center);
+        logo_icon.set_valign(gtk4::Align::Center);
+
+        let logo_badge = gtk4::Box::builder()
+            .css_classes(["newtab-brandmark"])
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Center)
+            .build();
+        logo_badge.append(&logo_icon);
+        brand_box.append(&logo_badge);
 
         let brand_label = gtk4::Label::builder()
             .label("স্বাধীন ব্রাউজার")
             .css_classes(["shadhin-brand-title"])
+            .halign(gtk4::Align::Center)
             .build();
-        title_box.append(&brand_label);
+        brand_box.append(&brand_label);
 
         let tagline = gtk4::Label::builder()
             .label("Sovereign, fast, and respectful of your digital freedom")
             .css_classes(["shadhin-brand-subtitle"])
-            .build();
-        title_box.append(&tagline);
-        container.append(&title_box);
-
-        // 3. Centered Pill Search Box
-        let search_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(8)
-            .css_classes(["shadhin-newtab-search-box"])
             .halign(gtk4::Align::Center)
             .build();
+        brand_box.append(&tagline);
+        container.append(&brand_box);
+
+        // 2. Centered Pill Search Box
+        let search_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(10)
+            .css_classes(["newtab-search"])
+            .halign(gtk4::Align::Center)
+            .hexpand(true)
+            .build();
+        search_box.set_size_request(520, 48);
 
         let search_icon = gtk4::Image::from_icon_name("system-search-symbolic");
-        search_icon.set_opacity(0.7);
+        search_icon.set_pixel_size(16);
+        search_icon.set_opacity(0.65);
         search_box.append(&search_icon);
 
         let search_entry = gtk4::Entry::builder()
-            .placeholder_text("Search the web privately")
+            .placeholder_text("Search the web privately or type a URL")
             .hexpand(true)
             .css_classes(["shadhin-newtab-search-entry"])
             .build();
@@ -95,7 +117,7 @@ impl ShadhinNewTab {
             if !query.is_empty() {
                 let url = if query.starts_with("http://")
                     || query.starts_with("https://")
-                    || query.contains('.') && !query.contains(' ')
+                    || (query.contains('.') && !query.contains(' '))
                 {
                     if !query.starts_with("http://") && !query.starts_with("https://") {
                         format!("https://{query}")
@@ -114,86 +136,104 @@ impl ShadhinNewTab {
         });
         container.append(&search_box);
 
-        // 4. Shortcut Tiles Grid
-        let shortcuts_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
+        // 3. Shortcuts Static Grid (gtk4::FlowBox)
+        let shortcuts_section = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
             .spacing(12)
             .halign(gtk4::Align::Center)
-            .css_classes(["shadhin-shortcut-grid"])
+            .hexpand(true)
             .build();
-        container.append(&shortcuts_box);
 
-        // 5. Recently Visited Sites Section
+        let shortcuts_flow = gtk4::FlowBox::builder()
+            .valign(gtk4::Align::Start)
+            .halign(gtk4::Align::Center)
+            .selection_mode(gtk4::SelectionMode::None)
+            .max_children_per_line(6)
+            .min_children_per_line(3)
+            .column_spacing(16)
+            .row_spacing(16)
+            .css_classes(["shadhin-shortcut-flow"])
+            .build();
+        shortcuts_section.append(&shortcuts_flow);
+        container.append(&shortcuts_section);
+
+        // 4. Recently Visited Sites Section
+        let recent_container = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(8)
+            .halign(gtk4::Align::Center)
+            .build();
+
+        let recent_lbl = gtk4::Label::builder()
+            .label("Recently Visited")
+            .css_classes(["dim-label"])
+            .halign(gtk4::Align::Center)
+            .build();
+        recent_container.append(&recent_lbl);
+
         let recent_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(8)
             .halign(gtk4::Align::Center)
-            .css_classes(["shadhin-recent-sites-grid"])
             .build();
-        container.append(&recent_box);
+        recent_container.append(&recent_box);
+        container.append(&recent_container);
 
-        // 6. Honest Privacy Shield Stats Bar (SPEC.md 2.8)
+        // 5. Honest Privacy Shield Status Card
         let stats_card = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(8)
+            .spacing(10)
             .halign(gtk4::Align::Center)
             .css_classes(["shadhin-stats-card"])
             .build();
+        stats_card.set_size_request(520, -1);
 
         let header_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(8)
+            .halign(gtk4::Align::Center)
             .build();
 
         let shield_icon = gtk4::Image::from_icon_name("security-high-symbolic");
+        shield_icon.set_pixel_size(18);
         header_row.append(&shield_icon);
 
         let stats_title = gtk4::Label::builder()
             .label("Privacy Shield — Protection Active")
-            .css_classes(["shadhin-stats-title"])
-            .hexpand(true)
-            .halign(gtk4::Align::Start)
+            .css_classes(["shadhin-stats-title", "heading"])
             .build();
         header_row.append(&stats_title);
         stats_card.append(&header_row);
 
-        let grid = gtk4::Grid::builder()
-            .column_spacing(20)
-            .row_spacing(4)
+        let badges_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(10)
             .halign(gtk4::Align::Center)
             .build();
 
-        let items = [
-            ("—", "Trackers Blocked", 0),
-            ("—", "Ads Blocked", 1),
-            ("—", "Fingerprints Blocked", 2),
-            ("—", "Data Saved", 3),
+        let badges = [
+            "EasyList Ad Blocking",
+            "EasyPrivacy Tracking Protection",
+            "HTTPS-Only Upgrade",
+            "Sandbox Isolation",
         ];
 
-        for (num, lbl, col) in items {
-            let num_lbl = gtk4::Label::builder()
-                .label(num)
-                .css_classes(["shadhin-stat-num"])
-                .tooltip_text("Not measurable on this WebKitGTK version")
+        for badge in badges {
+            let badge_lbl = gtk4::Label::builder()
+                .label(format!("✓ {badge}"))
+                .css_classes(["shadhin-stat-badge"])
                 .build();
-            let text_lbl = gtk4::Label::builder()
-                .label(lbl)
-                .css_classes(["shadhin-stat-label"])
-                .tooltip_text("Not measurable on this WebKitGTK version")
-                .build();
-
-            grid.attach(&num_lbl, col, 0, 1, 1);
-            grid.attach(&text_lbl, col, 1, 1, 1);
+            badges_box.append(&badge_lbl);
         }
 
-        stats_card.append(&grid);
+        stats_card.append(&badges_box);
         container.append(&stats_card);
 
         let storage: Rc<RefCell<Option<StorageService>>> = Rc::new(RefCell::new(None));
 
         Self {
             scrolled_window,
-            shortcuts_box,
+            shortcuts_flow,
             recent_box,
             on_navigate,
             storage,
@@ -209,7 +249,7 @@ impl ShadhinNewTab {
     pub fn load_data(&self, storage: StorageService) {
         *self.storage.borrow_mut() = Some(storage.clone());
 
-        let sc_box = self.shortcuts_box.clone();
+        let sc_flow = self.shortcuts_flow.clone();
         let rc_box = self.recent_box.clone();
         let on_nav = self.on_navigate.clone();
         let storage_add = storage.clone();
@@ -224,42 +264,52 @@ impl ShadhinNewTab {
                 (shortcuts, recent)
             },
             move |(shortcuts, recent): (Vec<ShortcutItem>, Vec<HistoryItem>)| {
-                // 1. Populate Shortcuts
-                while let Some(child) = sc_box.first_child() {
-                    sc_box.remove(&child);
+                // 1. Clear existing FlowBox children
+                while let Some(child) = sc_flow.first_child() {
+                    sc_flow.remove(&child);
                 }
 
                 let sc_ids: Vec<i64> = shortcuts.iter().map(|s| s.id).collect();
                 let total_sc = shortcuts.len();
 
                 for (idx, sc) in shortcuts.into_iter().enumerate() {
-                    let card_wrapper = gtk4::Box::builder()
-                        .orientation(gtk4::Orientation::Horizontal)
-                        .spacing(0)
-                        .build();
+                    let overlay = gtk4::Overlay::new();
 
                     let btn = gtk4::Button::builder()
-                        .css_classes(["shadhin-shortcut-card"])
+                        .css_classes(["speed-dial-tile", "flat"])
+                        .tooltip_text(&sc.url)
                         .build();
 
                     let card_box = gtk4::Box::builder()
                         .orientation(gtk4::Orientation::Vertical)
-                        .spacing(6)
+                        .spacing(8)
                         .halign(gtk4::Align::Center)
                         .valign(gtk4::Align::Center)
                         .build();
 
-                    let icon = gtk4::Image::from_icon_name("text-html-symbolic");
-                    icon.set_pixel_size(24);
-                    card_box.append(&icon);
-
-                    let label = gtk4::Label::builder()
-                        .label(&sc.title)
-                        .css_classes(["shadhin-shortcut-label"])
-                        .ellipsize(gtk4::pango::EllipsizeMode::End)
-                        .max_width_chars(12)
+                    let icon_box = gtk4::Box::builder()
+                        .css_classes(["speed-dial-icon"])
+                        .halign(gtk4::Align::Center)
+                        .valign(gtk4::Align::Center)
                         .build();
-                    card_box.append(&label);
+
+                    let first_char = sc.title.chars().next().unwrap_or('W').to_uppercase().to_string();
+                    let letter_lbl = gtk4::Label::builder()
+                        .label(&first_char)
+                        .halign(gtk4::Align::Center)
+                        .valign(gtk4::Align::Center)
+                        .build();
+                    icon_box.append(&letter_lbl);
+                    card_box.append(&icon_box);
+
+                    let title_lbl = gtk4::Label::builder()
+                        .label(&sc.title)
+                        .css_classes(["speed-dial-label"])
+                        .ellipsize(gtk4::pango::EllipsizeMode::End)
+                        .max_width_chars(11)
+                        .halign(gtk4::Align::Center)
+                        .build();
+                    card_box.append(&title_lbl);
 
                     btn.set_child(Some(&card_box));
 
@@ -271,70 +321,76 @@ impl ShadhinNewTab {
                         }
                     });
 
-                    // Action buttons column (edit, delete, move)
-                    let actions_col = gtk4::Box::builder()
-                        .orientation(gtk4::Orientation::Vertical)
-                        .spacing(2)
+                    overlay.set_child(Some(&btn));
+
+                    // Discreet options button on top right of the tile
+                    let more_btn = gtk4::Button::builder()
+                        .icon_name("view-more-symbolic")
+                        .css_classes(["flat", "circular", "speed-dial-more-btn"])
+                        .halign(gtk4::Align::End)
                         .valign(gtk4::Align::Start)
+                        .margin_top(4)
+                        .margin_end(4)
+                        .tooltip_text("Shortcut options")
+                        .build();
+                    more_btn.set_size_request(24, 24);
+                    overlay.add_overlay(&more_btn);
+
+                    // Context Popover Menu
+                    let menu_pop = gtk4::Popover::builder()
+                        .has_arrow(true)
+                        .autohide(true)
+                        .build();
+                    menu_pop.set_parent(&more_btn);
+
+                    let menu_box = gtk4::Box::builder()
+                        .orientation(gtk4::Orientation::Vertical)
+                        .spacing(4)
+                        .margin_top(6)
+                        .margin_bottom(6)
+                        .margin_start(6)
+                        .margin_end(6)
+                        .width_request(160)
                         .build();
 
-                    // Small delete button for shortcut
-                    let del_btn = gtk4::Button::builder()
-                        .icon_name("window-close-symbolic")
-                        .css_classes(["flat", "circular", "shadhin-delete-shortcut-btn"])
-                        .tooltip_text("Remove shortcut")
+                    // --- Edit Popover & Button ---
+                    let edit_pop = gtk4::Popover::builder()
+                        .has_arrow(true)
+                        .autohide(true)
                         .build();
-
-                    let sc_id = sc.id;
-                    let st_del = storage_add.clone();
-                    let sc_box_del = sc_box.clone();
-                    let card_del = card_wrapper.clone();
-                    del_btn.connect_clicked(move |_| {
-                        let st = st_del.clone();
-                        let box_ref = sc_box_del.clone();
-                        let c_ref = card_del.clone();
-                        st.dispatch(move |db| {
-                            let repo = ShortcutRepository::new(db.conn());
-                            let _ = repo.delete(sc_id);
-                        });
-                        box_ref.remove(&c_ref);
-                    });
-                    actions_col.append(&del_btn);
-
-                    // Edit button with popover
-                    let edit_btn = gtk4::Button::builder()
-                        .icon_name("document-edit-symbolic")
-                        .css_classes(["flat", "circular", "shadhin-delete-shortcut-btn"])
-                        .tooltip_text("Edit shortcut")
-                        .build();
-
-                    let edit_pop = gtk4::Popover::builder().autohide(true).build();
-                    edit_pop.set_parent(&edit_btn);
+                    edit_pop.set_parent(&btn);
 
                     let edit_box = gtk4::Box::builder()
                         .orientation(gtk4::Orientation::Vertical)
-                        .spacing(6)
-                        .margin_top(8)
-                        .margin_bottom(8)
-                        .margin_start(8)
-                        .margin_end(8)
-                        .width_request(200)
+                        .spacing(8)
+                        .margin_top(10)
+                        .margin_bottom(10)
+                        .margin_start(10)
+                        .margin_end(10)
+                        .width_request(240)
                         .build();
 
-                    let edit_title_entry = gtk4::Entry::builder().text(&sc.title).build();
-                    let edit_url_entry = gtk4::Entry::builder().text(&sc.url).build();
+                    let edit_title_lbl = gtk4::Label::builder()
+                        .label("Edit Shortcut")
+                        .css_classes(["heading"])
+                        .halign(gtk4::Align::Start)
+                        .build();
+                    edit_box.append(&edit_title_lbl);
+
+                    let edit_title_entry = gtk4::Entry::builder().text(&sc.title).placeholder_text("Name").build();
+                    let edit_url_entry = gtk4::Entry::builder().text(&sc.url).placeholder_text("URL").build();
+                    edit_box.append(&edit_title_entry);
+                    edit_box.append(&edit_url_entry);
+
                     let edit_save_btn = gtk4::Button::builder()
                         .label("Update")
                         .css_classes(["suggested-action"])
                         .halign(gtk4::Align::End)
                         .build();
-
-                    edit_box.append(&gtk4::Label::builder().label("Edit Shortcut").build());
-                    edit_box.append(&edit_title_entry);
-                    edit_box.append(&edit_url_entry);
                     edit_box.append(&edit_save_btn);
                     edit_pop.set_child(Some(&edit_box));
 
+                    let sc_id = sc.id;
                     let st_edit = storage_add.clone();
                     let this_edit = this_clone.clone();
                     let pop_edit_ref = edit_pop.clone();
@@ -342,8 +398,11 @@ impl ShadhinNewTab {
                     let e_url = edit_url_entry.clone();
                     edit_save_btn.connect_clicked(move |_| {
                         let t = e_title.text().trim().to_string();
-                        let u = e_url.text().trim().to_string();
+                        let mut u = e_url.text().trim().to_string();
                         if !t.is_empty() && !u.is_empty() {
+                            if !u.starts_with("http://") && !u.starts_with("https://") {
+                                u = format!("https://{u}");
+                            }
                             let st = st_edit.clone();
                             let this_rf = this_edit.clone();
                             st.dispatch(move |db| {
@@ -353,7 +412,7 @@ impl ShadhinNewTab {
                             pop_edit_ref.popdown();
                             let st_r = st_edit.clone();
                             glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(150),
+                                std::time::Duration::from_millis(100),
                                 move || {
                                     this_rf.load_data(st_r);
                                 },
@@ -361,24 +420,36 @@ impl ShadhinNewTab {
                         }
                     });
 
-                    edit_btn.connect_clicked(move |_| {
-                        edit_pop.popup();
+                    let menu_pop_close_edit = menu_pop.clone();
+                    let edit_pop_open = edit_pop.clone();
+                    let edit_opt_btn = gtk4::Button::builder()
+                        .label("Edit Shortcut…")
+                        .icon_name("document-edit-symbolic")
+                        .css_classes(["flat"])
+                        .halign(gtk4::Align::Fill)
+                        .build();
+                    edit_opt_btn.connect_clicked(move |_| {
+                        menu_pop_close_edit.popdown();
+                        edit_pop_open.popup();
                     });
-                    actions_col.append(&edit_btn);
+                    menu_box.append(&edit_opt_btn);
 
-                    // Reorder: Move Left (if not first)
+                    // --- Move Left Button (if idx > 0) ---
                     if idx > 0 {
                         let move_l_btn = gtk4::Button::builder()
+                            .label("Move Left")
                             .icon_name("go-previous-symbolic")
-                            .css_classes(["flat", "circular", "shadhin-delete-shortcut-btn"])
-                            .tooltip_text("Move left")
+                            .css_classes(["flat"])
+                            .halign(gtk4::Align::Fill)
                             .build();
 
                         let mut new_order = sc_ids.clone();
                         new_order.swap(idx, idx - 1);
                         let st_reorder = storage_add.clone();
                         let this_reorder = this_clone.clone();
+                        let menu_pop_close_ml = menu_pop.clone();
                         move_l_btn.connect_clicked(move |_| {
+                            menu_pop_close_ml.popdown();
                             let order = new_order.clone();
                             let st = st_reorder.clone();
                             let this_rf = this_reorder.clone();
@@ -388,28 +459,31 @@ impl ShadhinNewTab {
                             });
                             let st_r = st_reorder.clone();
                             glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(150),
+                                std::time::Duration::from_millis(100),
                                 move || {
                                     this_rf.load_data(st_r);
                                 },
                             );
                         });
-                        actions_col.append(&move_l_btn);
+                        menu_box.append(&move_l_btn);
                     }
 
-                    // Reorder: Move Right (if not last)
+                    // --- Move Right Button (if idx + 1 < total_sc) ---
                     if idx + 1 < total_sc {
                         let move_r_btn = gtk4::Button::builder()
+                            .label("Move Right")
                             .icon_name("go-next-symbolic")
-                            .css_classes(["flat", "circular", "shadhin-delete-shortcut-btn"])
-                            .tooltip_text("Move right")
+                            .css_classes(["flat"])
+                            .halign(gtk4::Align::Fill)
                             .build();
 
                         let mut new_order = sc_ids.clone();
                         new_order.swap(idx, idx + 1);
                         let st_reorder = storage_add.clone();
                         let this_reorder = this_clone.clone();
+                        let menu_pop_close_mr = menu_pop.clone();
                         move_r_btn.connect_clicked(move |_| {
+                            menu_pop_close_mr.popdown();
                             let order = new_order.clone();
                             let st = st_reorder.clone();
                             let this_rf = this_reorder.clone();
@@ -419,39 +493,91 @@ impl ShadhinNewTab {
                             });
                             let st_r = st_reorder.clone();
                             glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(150),
+                                std::time::Duration::from_millis(100),
                                 move || {
                                     this_rf.load_data(st_r);
                                 },
                             );
                         });
-                        actions_col.append(&move_r_btn);
+                        menu_box.append(&move_r_btn);
                     }
 
-                    card_wrapper.append(&btn);
-                    card_wrapper.append(&actions_col);
-                    sc_box.append(&card_wrapper);
+                    // --- Remove Button ---
+                    let del_opt_btn = gtk4::Button::builder()
+                        .label("Remove")
+                        .icon_name("user-trash-symbolic")
+                        .css_classes(["flat", "destructive-action"])
+                        .halign(gtk4::Align::Fill)
+                        .build();
+
+                    let st_del = storage_add.clone();
+                    let this_del = this_clone.clone();
+                    let menu_pop_close_del = menu_pop.clone();
+                    del_opt_btn.connect_clicked(move |_| {
+                        menu_pop_close_del.popdown();
+                        let st = st_del.clone();
+                        let this_rf = this_del.clone();
+                        st.dispatch(move |db| {
+                            let repo = ShortcutRepository::new(db.conn());
+                            let _ = repo.delete(sc_id);
+                        });
+                        let st_r = st_del.clone();
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(100),
+                            move || {
+                                this_rf.load_data(st_r);
+                            },
+                        );
+                    });
+                    menu_box.append(&del_opt_btn);
+                    menu_pop.set_child(Some(&menu_box));
+
+                    // Right click (secondary click) opens context menu
+                    let gesture_rc = gtk4::GestureClick::new();
+                    gesture_rc.set_button(3);
+                    let menu_pop_rc = menu_pop.clone();
+                    gesture_rc.connect_pressed(move |_, _, _, _| {
+                        menu_pop_rc.popup();
+                    });
+                    btn.add_controller(gesture_rc);
+
+                    // Clicking the "..." more button opens context menu
+                    let menu_pop_more = menu_pop.clone();
+                    more_btn.connect_clicked(move |_| {
+                        menu_pop_more.popup();
+                    });
+
+                    sc_flow.append(&overlay);
                 }
 
                 // Add "+ Add Shortcut" card with input popover
                 let add_btn = gtk4::Button::builder()
-                    .css_classes(["shadhin-shortcut-card"])
+                    .css_classes(["speed-dial-tile", "flat"])
+                    .tooltip_text("Add a new shortcut")
                     .build();
 
                 let add_box = gtk4::Box::builder()
                     .orientation(gtk4::Orientation::Vertical)
-                    .spacing(6)
+                    .spacing(8)
+                    .halign(gtk4::Align::Center)
+                    .valign(gtk4::Align::Center)
+                    .build();
+
+                let add_icon_box = gtk4::Box::builder()
+                    .css_classes(["speed-dial-icon"])
                     .halign(gtk4::Align::Center)
                     .valign(gtk4::Align::Center)
                     .build();
 
                 let add_icon = gtk4::Image::from_icon_name("list-add-symbolic");
-                add_icon.set_pixel_size(24);
-                add_box.append(&add_icon);
+                add_icon.set_pixel_size(20);
+                add_icon_box.append(&add_icon);
+                add_box.append(&add_icon_box);
 
                 let add_lbl = gtk4::Label::builder()
                     .label("Add Shortcut")
-                    .css_classes(["shadhin-shortcut-label"])
+                    .css_classes(["speed-dial-label"])
+                    .halign(gtk4::Align::Center)
                     .build();
                 add_box.append(&add_lbl);
                 add_btn.set_child(Some(&add_box));
@@ -465,22 +591,22 @@ impl ShadhinNewTab {
                 let pop_box = gtk4::Box::builder()
                     .orientation(gtk4::Orientation::Vertical)
                     .spacing(8)
-                    .margin_top(8)
-                    .margin_bottom(8)
-                    .margin_start(8)
-                    .margin_end(8)
+                    .margin_top(10)
+                    .margin_bottom(10)
+                    .margin_start(10)
+                    .margin_end(10)
                     .width_request(240)
                     .build();
 
                 let pop_title = gtk4::Label::builder()
                     .label("Add Shortcut")
-                    .css_classes(["title-4"])
+                    .css_classes(["heading"])
                     .halign(gtk4::Align::Start)
                     .build();
                 pop_box.append(&pop_title);
 
                 let title_entry = gtk4::Entry::builder()
-                    .placeholder_text("Title (e.g. GitHub)")
+                    .placeholder_text("Name (e.g. GitHub)")
                     .build();
                 pop_box.append(&title_entry);
 
@@ -491,7 +617,7 @@ impl ShadhinNewTab {
                 pop_box.append(&url_entry);
 
                 let save_btn = gtk4::Button::builder()
-                    .label("Save")
+                    .label("Add")
                     .css_classes(["suggested-action"])
                     .halign(gtk4::Align::End)
                     .build();
@@ -536,14 +662,14 @@ impl ShadhinNewTab {
 
                     let st_reload = st_save.clone();
                     glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(150),
+                        std::time::Duration::from_millis(100),
                         move || {
                             refresh_self.load_data(st_reload);
                         },
                     );
                 });
 
-                sc_box.append(&add_btn);
+                sc_flow.append(&add_btn);
 
                 // 2. Populate Recently Visited Sites
                 while let Some(child) = rc_box.first_child() {
@@ -553,6 +679,7 @@ impl ShadhinNewTab {
                 for item in recent {
                     let chip = gtk4::Button::builder()
                         .css_classes(["flat", "shadhin-recent-chip"])
+                        .tooltip_text(&item.url)
                         .build();
 
                     let chip_box = gtk4::Box::builder()
@@ -561,6 +688,7 @@ impl ShadhinNewTab {
                         .build();
 
                     let chip_icon = gtk4::Image::from_icon_name("document-open-recent-symbolic");
+                    chip_icon.set_pixel_size(14);
                     chip_box.append(&chip_icon);
 
                     let chip_lbl = gtk4::Label::builder()

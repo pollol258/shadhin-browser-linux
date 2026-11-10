@@ -423,33 +423,61 @@ progressbar.shadhin-progress progress {
 }
 
 /* --- New Tab Page Styling --- */
+.shadhin-newtab-container {
+  padding: 16px 8px;
+}
+
 .newtab-brandmark {
-  min-width: 64px;
-  min-height: 64px;
-  border-radius: 18px;
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 16px;
   background-color: @accent_bg;
   color: @accent_fg;
 }
 
+.shadhin-brand-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: @text_color;
+}
+
+.shadhin-brand-subtitle {
+  font-size: 13px;
+  color: @muted_text;
+}
+
 .newtab-search {
-  min-height: 52px;
+  min-height: 48px;
   border-radius: 999px;
   border: 1px solid @border_color;
   background-color: @card_bg;
-  padding: 0 18px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  padding: 0 16px;
+  box-shadow: none;
 }
 
 .newtab-search:focus-within {
+  border-color: @accent_bg;
   outline: 2px solid @accent_bg;
+  outline-offset: -1px;
+}
+
+.newtab-search entry,
+.newtab-search entry text {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+  color: @text_color;
 }
 
 .speed-dial-tile {
+  min-width: 108px;
+  min-height: 96px;
   background-color: @card_bg;
   border: 1px solid @border_color;
   border-radius: 12px;
-  padding: 14px;
-  transition: background-color 180ms ease;
+  padding: 10px 8px;
+  box-shadow: none;
 }
 
 .speed-dial-tile:hover {
@@ -457,11 +485,69 @@ progressbar.shadhin-progress progress {
 }
 
 .speed-dial-icon {
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 9px;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 10px;
   background-color: @headerbar_bg;
   font-weight: 700;
+  font-size: 17px;
+  color: @accent_bg;
+}
+
+.speed-dial-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: @text_color;
+}
+
+.speed-dial-more-btn {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: @muted_text;
+  opacity: 0.65;
+}
+
+.speed-dial-more-btn:hover {
+  opacity: 1;
+  background-color: @hover_bg;
+}
+
+.shadhin-recent-chip {
+  background-color: @card_bg;
+  border: 1px solid @border_color;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  box-shadow: none;
+}
+
+.shadhin-recent-chip:hover {
+  background-color: @hover_bg;
+}
+
+.shadhin-stats-card {
+  background-color: @card_bg;
+  border: 1px solid @border_color;
+  border-radius: 12px;
+  padding: 14px 20px;
+}
+
+.shadhin-stat-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: @success;
+  background-color: alpha(@success, 0.12);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+flowbox.shadhin-shortcut-flow > flowboxchild {
+  padding: 0;
+  background: transparent;
+  border: none;
 }
 
 /* --- Text Utility Classes --- */
