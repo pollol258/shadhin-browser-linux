@@ -18,6 +18,7 @@ pub struct ShadhinNewTab {
     recent_box: gtk4::Box,
     on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     storage: Rc<RefCell<Option<StorageService>>>,
+    active_popovers: Rc<RefCell<Vec<gtk4::Popover>>>,
 }
 
 impl ShadhinNewTab {
@@ -230,6 +231,7 @@ impl ShadhinNewTab {
         container.append(&stats_card);
 
         let storage: Rc<RefCell<Option<StorageService>>> = Rc::new(RefCell::new(None));
+        let active_popovers: Rc<RefCell<Vec<gtk4::Popover>>> = Rc::new(RefCell::new(Vec::new()));
 
         Self {
             scrolled_window,
@@ -237,6 +239,15 @@ impl ShadhinNewTab {
             recent_box,
             on_navigate,
             storage,
+            active_popovers,
+        }
+    }
+
+    /// Explicitly dismisses and unparents all popovers in this New Tab page
+    pub fn cleanup(&self) {
+        for pop in self.active_popovers.borrow_mut().drain(..) {
+            pop.popdown();
+            pop.unparent();
         }
     }
 
@@ -264,6 +275,12 @@ impl ShadhinNewTab {
                 (shortcuts, recent)
             },
             move |(shortcuts, recent): (Vec<ShortcutItem>, Vec<HistoryItem>)| {
+                // Dismiss and unparent any active popovers before clearing shortcut tiles
+                for pop in this_clone.active_popovers.borrow_mut().drain(..) {
+                    pop.popdown();
+                    pop.unparent();
+                }
+
                 // 1. Clear existing FlowBox children
                 while let Some(child) = sc_flow.first_child() {
                     sc_flow.remove(&child);
@@ -342,6 +359,7 @@ impl ShadhinNewTab {
                         .autohide(true)
                         .build();
                     menu_pop.set_parent(&more_btn);
+                    this_clone.active_popovers.borrow_mut().push(menu_pop.clone());
 
                     let menu_box = gtk4::Box::builder()
                         .orientation(gtk4::Orientation::Vertical)
@@ -359,6 +377,7 @@ impl ShadhinNewTab {
                         .autohide(true)
                         .build();
                     edit_pop.set_parent(&btn);
+                    this_clone.active_popovers.borrow_mut().push(edit_pop.clone());
 
                     let edit_box = gtk4::Box::builder()
                         .orientation(gtk4::Orientation::Vertical)
@@ -587,6 +606,7 @@ impl ShadhinNewTab {
                     .autohide(true)
                     .build();
                 popover.set_parent(&add_btn);
+                this_clone.active_popovers.borrow_mut().push(popover.clone());
 
                 let pop_box = gtk4::Box::builder()
                     .orientation(gtk4::Orientation::Vertical)

@@ -25,6 +25,7 @@ pub struct ShadhinSidebar {
     on_workspace_selected: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     active_popover: Rc<RefCell<Option<gtk4::Popover>>>,
+    tab_popovers: Rc<RefCell<Vec<gtk4::Popover>>>,
 }
 
 impl ShadhinSidebar {
@@ -49,6 +50,7 @@ impl ShadhinSidebar {
             Rc::new(RefCell::new(None));
         let on_create_workspace: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let active_popover: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
+        let tab_popovers: Rc<RefCell<Vec<gtk4::Popover>>> = Rc::new(RefCell::new(Vec::new()));
 
         // 1. Sidebar Header: "Tabs" label + New Tab (+) button
         let header_box = gtk4::Box::builder()
@@ -138,6 +140,7 @@ impl ShadhinSidebar {
             on_workspace_selected,
             on_create_workspace,
             active_popover,
+            tab_popovers,
         }
     }
 
@@ -178,10 +181,22 @@ impl ShadhinSidebar {
 
     /// Dismisses any active tab popover in the sidebar
     pub fn close_popover(&self) {
-        if let Some(ref pop) = *self.active_popover.borrow() {
+        if let Some(pop) = self.active_popover.borrow_mut().take() {
             pop.popdown();
+            pop.unparent();
         }
-        *self.active_popover.borrow_mut() = None;
+    }
+
+    /// Explicitly dismisses and unparents all sidebar tab popovers
+    pub fn cleanup(&self) {
+        if let Some(active) = self.active_popover.borrow_mut().take() {
+            active.popdown();
+            active.unparent();
+        }
+        for pop in self.tab_popovers.borrow_mut().drain(..) {
+            pop.popdown();
+            pop.unparent();
+        }
     }
 
     /// Connects tab mute toggle
@@ -201,6 +216,16 @@ impl ShadhinSidebar {
         selected_idx: i32,
         on_select: F,
     ) {
+        // Dismiss and unparent all existing tab popovers before rebuilding sidebar tab list
+        if let Some(active) = self.active_popover.borrow_mut().take() {
+            active.popdown();
+            active.unparent();
+        }
+        for pop in self.tab_popovers.borrow_mut().drain(..) {
+            pop.popdown();
+            pop.unparent();
+        }
+
         // Clear previous rows
         while let Some(child) = self.tabs_list_box.first_child() {
             self.tabs_list_box.remove(&child);
@@ -270,9 +295,12 @@ impl ShadhinSidebar {
             let on_close_cb = self.on_tab_close.clone();
             let tab_idx = i as i32;
             close_btn.connect_clicked(move |_| {
-                if let Some(ref cb) = *on_close_cb.borrow() {
-                    cb(tab_idx);
-                }
+                let cb_clone = on_close_cb.clone();
+                gtk4::glib::idle_add_local_once(move || {
+                    if let Some(ref cb) = *cb_clone.borrow() {
+                        cb(tab_idx);
+                    }
+                });
             });
             row_box.append(&close_btn);
 
@@ -293,17 +321,20 @@ impl ShadhinSidebar {
             let on_close_ctx = self.on_tab_close.clone();
             let is_pinned = tab_data.is_pinned;
             let active_pop_ref = self.active_popover.clone();
+            let tab_pops_ref = self.tab_popovers.clone();
 
             let row_box_ref = row_box.clone();
             right_click.connect_pressed(move |_, _, _, _| {
-                if let Some(ref old_pop) = *active_pop_ref.borrow() {
+                if let Some(old_pop) = active_pop_ref.borrow_mut().take() {
                     old_pop.popdown();
+                    old_pop.unparent();
                 }
 
                 let pop = gtk4::Popover::new();
                 pop.set_parent(&row_box_ref);
                 pop.set_autohide(true);
                 pop.add_css_class("shadhin-popover");
+                tab_pops_ref.borrow_mut().push(pop.clone());
 
                 let menu_vbox = gtk4::Box::builder()
                     .orientation(gtk4::Orientation::Vertical)
@@ -370,13 +401,27 @@ impl ShadhinSidebar {
                 let close_cb = on_close_ctx.clone();
                 close_item.connect_clicked(move |_| {
                     pop_clone3.popdown();
-                    if let Some(ref cb) = *close_cb.borrow() {
-                        cb(tab_idx);
-                    }
+                    let cb_clone = close_cb.clone();
+                    gtk4::glib::idle_add_local_once(move || {
+                        if let Some(ref cb) = *cb_clone.borrow() {
+                            cb(tab_idx);
+                        }
+                    });
                 });
                 menu_vbox.append(&close_item);
 
                 pop.set_child(Some(&menu_vbox));
+
+                let act_pop = active_pop_ref.clone();
+                pop.connect_closed(move |p| {
+                    if let Some(ref active) = *act_pop.borrow()
+                        && active == p
+                    {
+                        *act_pop.borrow_mut() = None;
+                    }
+                    p.unparent();
+                });
+
                 *active_pop_ref.borrow_mut() = Some(pop.clone());
                 pop.popup();
             });

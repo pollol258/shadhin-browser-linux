@@ -78,6 +78,13 @@ pub struct TabUiItem {
     pub https_fallback_url: RefCell<Option<String>>,
 }
 
+impl TabUiItem {
+    /// Explicitly cleans up child popovers and event listeners
+    pub fn cleanup(&self) {
+        self.newtab.cleanup();
+    }
+}
+
 #[derive(Clone)]
 pub struct ShadhinWindow {
     window: adw::ApplicationWindow,
@@ -2670,6 +2677,7 @@ impl ShadhinWindow {
         let ts_co = self.tab_strip.clone();
         let sb_co = self.sidebar.clone();
         let tb_co = self.toolbar.clone();
+        let items_co = self.tab_items.clone();
 
         self.tab_strip.connect_close_other_tabs(move |idx| {
             if idx >= 0 {
@@ -2677,6 +2685,26 @@ impl ShadhinWindow {
                 let mut tm = tm_co.borrow_mut();
                 tm.close_other_tabs(idx as usize);
                 drop(tm);
+
+                tb_co.close_all_popovers();
+                ts_co.close_popover();
+                sb_co.close_popover();
+
+                let keep_idx = idx as usize;
+                let mut items = items_co.borrow_mut();
+                let mut kept_item = None;
+                for (i, item) in items.drain(..).enumerate() {
+                    if i == keep_idx {
+                        kept_item = Some(item);
+                    } else {
+                        item.cleanup();
+                    }
+                }
+                if let Some(item) = kept_item {
+                    items.push(item);
+                }
+                drop(items);
+
                 while tv_co.n_pages() > 1 {
                     let page = tv_co.nth_page(0);
                     tv_co.close_page_finish(&page, true);
@@ -2698,6 +2726,9 @@ impl ShadhinWindow {
         let fb_target_change = self.fallback_target.clone();
 
         self.tab_view.connect_selected_page_notify(move |tv| {
+            tb_change.close_all_popovers();
+            ts_change.close_popover();
+            sb_change.close_popover();
             if let Some(page) = tv.selected_page() {
                 let idx = tv.page_position(&page) as usize;
                 let mut tm = tm_change.borrow_mut();
@@ -2789,9 +2820,15 @@ impl ShadhinWindow {
             let _ = tm.close_tab(idx);
             drop(tm);
 
+            // Cleanly close popovers and ensure menu buttons are reset
+            tb_close.close_all_popovers();
+            ts_close.close_popover();
+            sb_close.close_popover();
+
             let mut items = items_close.borrow_mut();
             if idx < items.len() {
-                items.remove(idx);
+                let item = items.remove(idx);
+                item.cleanup();
             }
             drop(items);
 
@@ -3081,8 +3118,18 @@ impl ShadhinWindow {
         let tm_close = self.tab_manager.clone();
         let sm_close = self.session_mgr.clone();
         let storage_close = self.storage.clone();
+        let tb_win_close = self.toolbar.clone();
+        let ts_win_close = self.tab_strip.clone();
+        let sb_win_close = self.sidebar.clone();
+        let items_win_close = self.tab_items.clone();
 
         self.window.connect_close_request(move |_| {
+            tb_win_close.cleanup();
+            ts_win_close.cleanup();
+            sb_win_close.cleanup();
+            for item in items_win_close.borrow_mut().drain(..) {
+                item.cleanup();
+            }
             let ws = cur_ws_close.borrow().clone();
             let tabs: Vec<(String, String, bool)> = tm_close
                 .borrow()
@@ -3797,6 +3844,11 @@ impl ShadhinWindow {
     /// Accessor to the toolbar
     pub fn toolbar(&self) -> &ShadhinToolbar {
         &self.toolbar
+    }
+
+    /// Accessor to the vertical sidebar
+    pub fn sidebar(&self) -> &ShadhinSidebar {
+        &self.sidebar
     }
 
     /// Accessor to the tab strip

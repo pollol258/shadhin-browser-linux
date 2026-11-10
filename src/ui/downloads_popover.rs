@@ -596,6 +596,12 @@ impl DownloadsPopover {
     pub fn popover(&self) -> &gtk4::Popover {
         &self.popover
     }
+
+    /// Explicitly dismisses and unparents the downloads popover
+    pub fn cleanup(&self) {
+        self.popover.popdown();
+        self.popover.unparent();
+    }
 }
 
 #[cfg(test)]

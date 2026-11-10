@@ -263,7 +263,19 @@ impl ShadhinToolbar {
             dl.popdown();
         }
         self.menu_btn.popdown();
+        self.menu_btn.set_active(false);
         self.address_bar.close_suggestions();
+        self.address_bar.close_star_popover();
+    }
+
+    /// Explicitly dismisses and unparents all popovers attached to toolbar widgets
+    pub fn cleanup(&self) {
+        self.close_all_popovers();
+        self.privacy_popover.cleanup();
+        if let Some(ref dl) = *self.downloads_popover.borrow() {
+            dl.cleanup();
+        }
+        self.address_bar.cleanup();
     }
 
     /// Updates back button sensitivity

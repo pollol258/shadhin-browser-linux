@@ -411,4 +411,10 @@ impl PrivacyPopover {
     pub fn popover(&self) -> &gtk4::Popover {
         &self.popover
     }
+
+    /// Explicitly dismisses and unparents the privacy popover
+    pub fn cleanup(&self) {
+        self.popover.popdown();
+        self.popover.unparent();
+    }
 }

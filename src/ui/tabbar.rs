@@ -28,6 +28,7 @@ pub struct ShadhinTabStrip {
     on_pin_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     on_close_others: Rc<RefCell<Option<Box<dyn Fn(i32)>>>>,
     active_popover: Rc<RefCell<Option<gtk4::Popover>>>,
+    tab_popovers: Rc<RefCell<Vec<gtk4::Popover>>>,
 }
 
 impl ShadhinTabStrip {
@@ -70,6 +71,7 @@ impl ShadhinTabStrip {
         let on_pin_tab: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let on_close_others: Rc<RefCell<Option<Box<dyn Fn(i32)>>>> = Rc::new(RefCell::new(None));
         let active_popover: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
+        let tab_popovers: Rc<RefCell<Vec<gtk4::Popover>>> = Rc::new(RefCell::new(Vec::new()));
 
         Self {
             container,
@@ -82,11 +84,22 @@ impl ShadhinTabStrip {
             on_pin_tab,
             on_close_others,
             active_popover,
+            tab_popovers,
         }
     }
 
     /// Re-renders the tab buttons based on the `adw::TabView` pages and display metadata
     pub fn refresh(&self, tabs_info: &[TabDisplayInfo]) {
+        // Dismiss and unparent all existing tab popovers before removing tab widgets
+        if let Some(active) = self.active_popover.borrow_mut().take() {
+            active.popdown();
+            active.unparent();
+        }
+        for pop in self.tab_popovers.borrow_mut().drain(..) {
+            pop.popdown();
+            pop.unparent();
+        }
+
         // Clear existing visual tab buttons
         while let Some(child) = self.tabs_box.first_child() {
             self.tabs_box.remove(&child);
@@ -184,7 +197,11 @@ impl ShadhinTabStrip {
             let tv_close = self.tab_view.clone();
             let page_close = page.clone();
             close_btn.connect_clicked(move |_| {
-                tv_close.close_page(&page_close);
+                let tv = tv_close.clone();
+                let page = page_close.clone();
+                gtk4::glib::idle_add_local_once(move || {
+                    tv.close_page(&page);
+                });
             });
             tab_btn.append(&close_btn);
 
@@ -200,6 +217,7 @@ impl ShadhinTabStrip {
             // Tab Context Menu (Right-click popover)
             let popover = gtk4::Popover::new();
             popover.set_parent(&tab_btn);
+            self.tab_popovers.borrow_mut().push(popover.clone());
 
             let menu_box = gtk4::Box::builder()
                 .orientation(gtk4::Orientation::Vertical)
@@ -274,18 +292,33 @@ impl ShadhinTabStrip {
             let page_ctx_close = page.clone();
             close_tab_menu_btn.connect_clicked(move |_| {
                 pop_close.popdown();
-                tv_ctx_close.close_page(&page_ctx_close);
+                let tv = tv_ctx_close.clone();
+                let page = page_ctx_close.clone();
+                gtk4::glib::idle_add_local_once(move || {
+                    tv.close_page(&page);
+                });
             });
             menu_box.append(&close_tab_menu_btn);
 
             popover.set_child(Some(&menu_box));
+
+            let act_ref = self.active_popover.clone();
+            popover.connect_closed(move |p| {
+                if let Some(ref active) = *act_ref.borrow()
+                    && active == p
+                {
+                    *act_ref.borrow_mut() = None;
+                }
+            });
 
             let right_click = gtk4::GestureClick::new();
             right_click.set_button(3); // Right click button
             let pop_popup = popover.clone();
             let active_pop_ref = self.active_popover.clone();
             right_click.connect_pressed(move |_, _, _, _| {
-                if let Some(ref old_pop) = *active_pop_ref.borrow() {
+                if let Some(ref old_pop) = *active_pop_ref.borrow()
+                    && old_pop != &pop_popup
+                {
                     old_pop.popdown();
                 }
                 *active_pop_ref.borrow_mut() = Some(pop_popup.clone());
@@ -352,10 +385,21 @@ impl ShadhinTabStrip {
 
     /// Dismisses any active tab context menu popover
     pub fn close_popover(&self) {
-        if let Some(ref pop) = *self.active_popover.borrow() {
+        if let Some(pop) = self.active_popover.borrow_mut().take() {
             pop.popdown();
         }
-        *self.active_popover.borrow_mut() = None;
+    }
+
+    /// Explicitly dismisses and unparents all tab context menu popovers
+    pub fn cleanup(&self) {
+        if let Some(active) = self.active_popover.borrow_mut().take() {
+            active.popdown();
+            active.unparent();
+        }
+        for pop in self.tab_popovers.borrow_mut().drain(..) {
+            pop.popdown();
+            pop.unparent();
+        }
     }
 
     /// Connects the callback when closing all other tabs via context menu

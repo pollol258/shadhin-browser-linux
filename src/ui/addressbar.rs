@@ -46,6 +46,7 @@ pub struct AddressBar {
     autocomplete_debounce: Debounce,
     is_programmatic_change: Rc<RefCell<bool>>,
     was_focused_before_click: Rc<RefCell<bool>>,
+    star_popover: Rc<RefCell<Option<gtk4::Popover>>>,
 }
 
 impl AddressBar {
@@ -195,6 +196,7 @@ impl AddressBar {
             autocomplete_debounce,
             is_programmatic_change,
             was_focused_before_click,
+            star_popover: Rc::new(RefCell::new(None)),
         };
 
         addr.setup_star_popover();
@@ -377,6 +379,23 @@ impl AddressBar {
     /// Closes the suggestions popover if open
     pub fn close_suggestions(&self) {
         self.suggestions_popover.popdown();
+    }
+
+    /// Closes the star bookmark popover if open
+    pub fn close_star_popover(&self) {
+        if let Some(ref pop) = *self.star_popover.borrow() {
+            pop.popdown();
+        }
+    }
+
+    /// Explicitly unparents suggestions and bookmark popovers
+    pub fn cleanup(&self) {
+        self.close_suggestions();
+        self.suggestions_popover.unparent();
+        if let Some(pop) = self.star_popover.borrow_mut().take() {
+            pop.popdown();
+            pop.unparent();
+        }
     }
 
     /// Accessor to the suggestions popover
@@ -647,6 +666,7 @@ impl AddressBar {
             .autohide(true)
             .build();
         popover.set_parent(&self.star_btn);
+        *self.star_popover.borrow_mut() = Some(popover.clone());
 
         let pop_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
