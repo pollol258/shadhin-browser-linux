@@ -328,9 +328,6 @@ impl ShadhinWindow {
         apply_itp(&active_network_session.borrow(), true);
 
         let filter_manager = ContentFilterManager::new();
-        filter_manager.initialize(|| {
-            info!("Bundled content filter lists compiled & ready");
-        });
 
         let https_manager = Rc::new(RefCell::new(HttpsUpgradeManager::new()));
 
@@ -616,22 +613,56 @@ impl ShadhinWindow {
             toast_mb.add_toast(toast);
         });
 
-        // Periodic system RAM monitoring via /proc/meminfo
+        // Deferred background tasks: run AFTER first paint on main thread idle
         let mb_poll = memory_banner.clone();
         let nav_poll = nav_ctx.clone();
-        glib::timeout_add_seconds_local(15, move || {
-            if let Some(mem) = crate::platform::linux::memory::MemoryInfo::read_current() {
-                let is_low = mem.is_under_pressure();
-                mb_poll.set_revealed(is_low);
-                if is_low {
-                    let freed = nav_poll.discard_idle_tabs_and_free_ram(1, std::time::Duration::from_secs(45), true);
-                    crate::browser::webview::trim_website_data_cache(&nav_poll.session.borrow());
-                    if freed > 0 {
-                        tracing::info!("Auto-suspended {freed} background tabs due to system memory pressure");
+        let bb_defer = bookmarks_bar.clone();
+        let fm_defer = filter_manager.clone();
+        glib::idle_add_local_once(move || {
+            // 1. Initial bookmarks bar refresh from SQLite
+            bb_defer.refresh();
+
+            // 2. Initial adblock / filter list compilation
+            let nav_fm = nav_poll.clone();
+            fm_defer.initialize(move || {
+                info!("Bundled content filter lists compiled & ready (deferred)");
+                let items = nav_fm.tab_items.borrow();
+                for item in items.iter() {
+                    if let Some(ref wv) = *item.webview.borrow()
+                        && let Some(ucm) = wv.user_content_manager()
+                    {
+                        let shield = nav_fm.config.borrow().privacy.shield_enabled;
+                        let ads = nav_fm.config.borrow().privacy.block_ads;
+                        let trackers = nav_fm.config.borrow().privacy.block_trackers;
+                        nav_fm
+                            .filter_manager
+                            .apply_filters(&ucm, shield, ads, trackers);
                     }
                 }
-            }
-            glib::ControlFlow::Continue
+            });
+
+            // 3. WebKit memory pressure monitor & 15-second RAM polling
+            crate::browser::webview::configure_memory_pressure_settings();
+            glib::timeout_add_seconds_local(15, move || {
+                if let Some(mem) = crate::platform::linux::memory::MemoryInfo::read_current() {
+                    let is_low = mem.is_under_pressure();
+                    mb_poll.set_revealed(is_low);
+                    if is_low {
+                        let freed = nav_poll.discard_idle_tabs_and_free_ram(
+                            1,
+                            std::time::Duration::from_secs(45),
+                            true,
+                        );
+                        crate::browser::webview::trim_website_data_cache(&nav_poll.session.borrow());
+                        if freed > 0 {
+                            tracing::info!(
+                                "Auto-suspended {freed} background tabs due to system memory pressure"
+                            );
+                        }
+                    }
+                }
+                glib::ControlFlow::Continue
+            });
         });
 
         // Wire top TabBar '+' new tab button
@@ -1066,7 +1097,11 @@ impl NavigationContext {
         let history_panel = HistoryPanel::new(self.storage.clone());
         stack.add_named(history_panel.widget(), Some("history"));
 
-        newtab.load_data(self.storage.clone());
+        let nt_defer = newtab.clone();
+        let st_defer = self.storage.clone();
+        glib::idle_add_local_once(move || {
+            nt_defer.load_data(st_defer);
+        });
 
         let ui_item = Rc::new(TabUiItem {
             stack: stack.clone(),

@@ -44,15 +44,12 @@ impl BookmarksBar {
 
         let on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
-        let bar = Self {
+        Self {
             container,
             chips_box,
             on_navigate,
             storage,
-        };
-
-        bar.refresh();
-        bar
+        }
     }
 
     /// Accessor to the root widget

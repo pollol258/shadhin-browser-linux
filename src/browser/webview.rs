@@ -21,48 +21,52 @@ static MEMORY_SETTINGS_INIT: Once = Once::new();
 /// purges dead resources, font caches, image decoders, and triggers garbage collection
 /// BEFORE the system starts paging / swapping.
 pub fn configure_memory_pressure_settings() {
-    let mut settings = webkit6::MemoryPressureSettings::new();
-    let mem_info = crate::platform::linux::memory::MemoryInfo::read_current();
+    MEMORY_SETTINGS_INIT.call_once(|| {
+        let mut settings = webkit6::MemoryPressureSettings::new();
+        let mem_info = crate::platform::linux::memory::MemoryInfo::read_current();
 
-    if let Some(mem) = mem_info {
-        let total_mb = mem.total_kb / 1024;
-        tracing::info!("Configuring WebKit MemoryPressureSettings for system with {total_mb} MB RAM");
+        if let Some(mem) = mem_info {
+            let total_mb = mem.total_kb / 1024;
+            tracing::info!(
+                "Configuring WebKit MemoryPressureSettings for system with {total_mb} MB RAM"
+            );
 
-        if total_mb <= 8192 {
-            // Low-RAM profile (<= 8GB):
-            // Conservative thresholds to act early before swap thrashing.
-            // Order matters: WebKit asserts conservative < strict < kill.
+            if total_mb <= 8192 {
+                // Low-RAM profile (<= 8GB):
+                // Conservative thresholds to act early before swap thrashing.
+                // Order matters: WebKit asserts conservative < strict < kill.
+                settings.set_kill_threshold(0.95);
+                settings.set_strict_threshold(0.80);
+                settings.set_conservative_threshold(0.65);
+                settings.set_poll_interval(1.5);
+                settings.set_memory_limit(total_mb as u32);
+            } else if total_mb <= 16384 {
+                // Medium-RAM profile (8GB - 16GB):
+                // Balanced thresholds for active multitasking.
+                settings.set_kill_threshold(0.96);
+                settings.set_strict_threshold(0.85);
+                settings.set_conservative_threshold(0.70);
+                settings.set_poll_interval(2.0);
+                settings.set_memory_limit(total_mb as u32);
+            } else {
+                // High-RAM profile (> 16GB):
+                // Relaxed thresholds to avoid premature tab discarding.
+                settings.set_kill_threshold(0.98);
+                settings.set_strict_threshold(0.90);
+                settings.set_conservative_threshold(0.75);
+                settings.set_poll_interval(3.0);
+                settings.set_memory_limit(total_mb as u32);
+            }
+        } else {
+            // Fallback defaults
             settings.set_kill_threshold(0.95);
-            settings.set_strict_threshold(0.80);
-            settings.set_conservative_threshold(0.65);
-            settings.set_poll_interval(1.5);
-            settings.set_memory_limit(total_mb as u32);
-        } else if total_mb <= 16384 {
-            // Medium-RAM profile (8GB - 16GB):
-            // Balanced thresholds for active multitasking.
-            settings.set_kill_threshold(0.96);
             settings.set_strict_threshold(0.85);
             settings.set_conservative_threshold(0.70);
             settings.set_poll_interval(2.0);
-            settings.set_memory_limit(total_mb as u32);
-        } else {
-            // High-RAM profile (> 16GB):
-            // Relaxed thresholds to avoid premature tab discarding.
-            settings.set_kill_threshold(0.98);
-            settings.set_strict_threshold(0.90);
-            settings.set_conservative_threshold(0.75);
-            settings.set_poll_interval(3.0);
-            settings.set_memory_limit(total_mb as u32);
         }
-    } else {
-        // Fallback defaults
-        settings.set_kill_threshold(0.95);
-        settings.set_strict_threshold(0.85);
-        settings.set_conservative_threshold(0.70);
-        settings.set_poll_interval(2.0);
-    }
 
-    webkit6::NetworkSession::set_memory_pressure_settings(&mut settings);
+        webkit6::NetworkSession::set_memory_pressure_settings(&mut settings);
+    });
 }
 
 /// Pauses any playing HTML5 audio or video elements in the WebView
@@ -176,11 +180,6 @@ pub fn create_configured_webview_with_session(
         ctx.set_cache_model(webkit6::CacheModel::DocumentBrowser);
         configure_preferred_languages(&ctx);
     }
-
-    // Configure WebKit's MemoryPressureSettings adaptively
-    MEMORY_SETTINGS_INIT.call_once(|| {
-        configure_memory_pressure_settings();
-    });
 
     let settings = create_hardened_settings(javascript_enabled);
 

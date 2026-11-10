@@ -89,7 +89,12 @@ impl HistoryPanel {
         });
 
         panel.wire_clear_button(&clear_btn);
-        panel.refresh("");
+
+        // Lazily query SQLite only when the panel is mapped / displayed
+        let panel_map = panel.clone();
+        panel.container.connect_map(move |_| {
+            panel_map.refresh("");
+        });
 
         panel
     }

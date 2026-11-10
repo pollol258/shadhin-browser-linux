@@ -10,12 +10,20 @@ use crate::ui::window::ShadhinWindow;
 use adw::prelude::*;
 use gtk4::gio;
 use gtk4::glib;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tracing::info;
 
 pub const APP_ID: &str = "com.shadhin.browser";
 pub const APP_NAME: &str = "Shadhin Browser";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+
+/// Records process startup timestamp as early as possible
+pub fn init_startup_timer() {
+    START_INSTANT.get_or_init(Instant::now);
+}
 
 pub struct ShadhinApp {
     app: adw::Application,
@@ -172,6 +180,14 @@ impl ShadhinApp {
         // Build main application window shell
         let window = ShadhinWindow::new_with_urls(app, urls);
         window.present();
+
+        // Startup instrumentation: measure duration to first paint / event loop idle
+        glib::idle_add_local_once(move || {
+            if let Some(start) = START_INSTANT.get() {
+                let ms = start.elapsed().as_secs_f64() * 1000.0;
+                info!("STARTUP_METRIC: Time to first paint (window shown): {:.2} ms", ms);
+            }
+        });
 
         if std::env::var("SHADHIN_BENCH_STARTUP").is_ok() {
             let app_clone = app.clone();

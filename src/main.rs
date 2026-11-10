@@ -12,6 +12,7 @@ use shadhin_browser::browser::cli::{format_help_text, parse_cli_args};
 use shadhin_browser::utils::logging::init_logging;
 
 fn main() -> glib::ExitCode {
+    shadhin_browser::app::init_startup_timer();
     let args: Vec<String> = std::env::args().collect();
     if let Ok(opts) = parse_cli_args(&args) {
         if opts.show_version {
