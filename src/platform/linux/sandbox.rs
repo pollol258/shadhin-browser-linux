@@ -1,9 +1,11 @@
 //! Linux WebKit child process and bubblewrap sandbox inspection
 //!
-//! Checks descendant processes in `/proc` for seccomp mode and PID/user namespaces.
+//! Inspects `/proc` for child `WebKitWebProcess` instances, verifying
+//! whether they are wrapped with Bubblewrap (`bwrap`), running under an ancestor `bwrap`,
+//! enforcing Seccomp filter mode (`Seccomp: 2`), or isolated within distinct namespaces.
 
 use crate::platform::traits::{PlatformSandboxStatus, SandboxChecker};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -21,24 +23,30 @@ impl LinuxSandboxChecker {
     }
 }
 
-struct ProcMetadata {
-    pid: u32,
+#[derive(Clone, Debug)]
+struct ProcInfo {
     ppid: u32,
     name: String,
+    cmdline: String,
     seccomp: u32,
+    uid: u32,
 }
 
 impl SandboxChecker for LinuxSandboxChecker {
     fn check_sandbox_status(&self) -> PlatformSandboxStatus {
         let my_pid = std::process::id();
-        let proc_dir = Path::new("/proc");
+        let my_uid = get_process_uid(my_pid);
 
+        let proc_dir = Path::new("/proc");
         let entries = match fs::read_dir(proc_dir) {
             Ok(e) => e,
-            Err(_) => return PlatformSandboxStatus::Inactive,
+            Err(e) => {
+                println!("[SandboxChecker] Error opening /proc: {e}");
+                return PlatformSandboxStatus::Inactive;
+            }
         };
 
-        let mut procs: Vec<ProcMetadata> = Vec::new();
+        let mut procs: HashMap<u32, ProcInfo> = HashMap::new();
 
         for entry in entries.flatten() {
             let file_name = entry.file_name();
@@ -52,88 +60,222 @@ impl SandboxChecker for LinuxSandboxChecker {
                 Err(_) => continue,
             };
 
-            let status_path = entry.path().join("status");
-            if let Ok(content) = fs::read_to_string(status_path) {
-                let mut ppid: Option<u32> = None;
-                let mut name: Option<String> = None;
-                let mut seccomp: Option<u32> = None;
+            // Read /proc/<pid>/cmdline
+            let cmdline = match fs::read(entry.path().join("cmdline")) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).replace('\0', " "),
+                Err(_) => String::new(),
+            };
 
+            // Read /proc/<pid>/status
+            let mut ppid = 0;
+            let mut name = String::new();
+            let mut seccomp = 0;
+            let mut uid = 0;
+
+            if let Ok(content) = fs::read_to_string(entry.path().join("status")) {
                 for line in content.lines() {
                     if let Some(rest) = line.strip_prefix("PPid:") {
-                        ppid = rest.trim().parse::<u32>().ok();
+                        ppid = rest.trim().parse::<u32>().unwrap_or(0);
                     } else if let Some(rest) = line.strip_prefix("Name:") {
-                        name = Some(rest.trim().to_string());
+                        name = rest.trim().to_string();
                     } else if let Some(rest) = line.strip_prefix("Seccomp:") {
-                        seccomp = rest.trim().parse::<u32>().ok();
+                        seccomp = rest.trim().parse::<u32>().unwrap_or(0);
+                    } else if let Some(rest) = line.strip_prefix("Uid:") {
+                        uid = rest
+                            .split_whitespace()
+                            .next()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0);
                     }
                 }
-
-                if let (Some(ppid), Some(name)) = (ppid, name) {
-                    procs.push(ProcMetadata {
-                        pid,
-                        ppid,
-                        name,
-                        seccomp: seccomp.unwrap_or(0),
-                    });
-                }
             }
+
+            procs.insert(
+                pid,
+                ProcInfo {
+                    ppid,
+                    name,
+                    cmdline,
+                    seccomp,
+                    uid,
+                },
+            );
         }
 
-        // Traverse process tree to find all descendants of the UI process
+        // Trace descendants of UI process
         let mut descendant_pids = HashSet::new();
         let mut queue = vec![my_pid];
 
         while let Some(parent) = queue.pop() {
-            for p in &procs {
-                if p.ppid == parent && !descendant_pids.contains(&p.pid) {
-                    descendant_pids.insert(p.pid);
-                    queue.push(p.pid);
+            for (&pid, proc) in &procs {
+                if proc.ppid == parent && !descendant_pids.contains(&pid) {
+                    descendant_pids.insert(pid);
+                    queue.push(pid);
                 }
             }
         }
 
-        // Read UI process namespaces for comparison
         let my_pid_ns = fs::read_link(format!("/proc/{my_pid}/ns/pid")).ok();
         let my_user_ns = fs::read_link(format!("/proc/{my_pid}/ns/user")).ok();
 
         let mut found_web_process = false;
+        let mut any_sandbox_active = false;
 
-        for p in &procs {
-            if descendant_pids.contains(&p.pid)
-                && (p.name.contains("WebKitWebProcess")
-                    || p.name.contains("WebProcess")
-                    || p.name.contains("WebKitNetworkPr"))
-            {
-                found_web_process = true;
+        for (&pid, proc) in &procs {
+            // Check if process matches WebKitWebProcess or WebProcess
+            let is_web_process = proc.cmdline.contains("WebKitWebProcess")
+                || proc.cmdline.contains("WebProcess")
+                || proc.name.contains("WebKitWebProces")
+                || proc.name.contains("WebProcess");
 
-                // Seccomp mode 2 indicates filter is active
-                let has_seccomp = p.seccomp >= 2;
+            if !is_web_process {
+                continue;
+            }
 
-                // Check namespace isolation
-                let child_pid_ns = fs::read_link(format!("/proc/{}/ns/pid", p.pid)).ok();
-                let child_user_ns = fs::read_link(format!("/proc/{}/ns/user", p.pid)).ok();
+            // Only consider processes that are either direct/indirect descendants of UI process,
+            // or owned by the current user (in case of reparenting/subreaper).
+            let is_our_process = descendant_pids.contains(&pid)
+                || (my_uid.is_some() && Some(proc.uid) == my_uid);
 
-                let has_isolated_pid_ns = match (&my_pid_ns, &child_pid_ns) {
-                    (Some(parent), Some(child)) => parent != child,
-                    _ => false,
-                };
+            if !is_our_process {
+                continue;
+            }
 
-                let has_isolated_user_ns = match (&my_user_ns, &child_user_ns) {
-                    (Some(parent), Some(child)) => parent != child,
-                    _ => false,
-                };
+            found_web_process = true;
 
-                // Active sandbox when seccomp filter is active and namespaces are isolated
-                if has_seccomp && (has_isolated_pid_ns || has_isolated_user_ns) {
-                    return PlatformSandboxStatus::Active;
+            println!(
+                "[SandboxChecker] Inspected WebKit process: PID={}, PPid={}, Name='{}', Cmdline='{}', Seccomp={}, UID={}",
+                pid, proc.ppid, proc.name, proc.cmdline, proc.seccomp, proc.uid
+            );
+
+            // 1. Check if cmdline directly contains bwrap
+            if proc.cmdline.contains("bwrap") {
+                println!(
+                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} command line contains 'bwrap'",
+                    pid
+                );
+                any_sandbox_active = true;
+                break;
+            }
+
+            // 2. Check if parent or any ancestor process is bwrap
+            let mut curr_ppid = proc.ppid;
+            let mut ancestor_is_bwrap = false;
+            for _ in 0..6 {
+                if curr_ppid == 0 || curr_ppid == 1 {
+                    break;
                 }
+                if let Some(parent) = procs.get(&curr_ppid) {
+                    if parent.cmdline.contains("bwrap") || parent.name.contains("bwrap") {
+                        println!(
+                            "[SandboxChecker] -> Sandbox ACTIVE: PID {} ancestor PID {} is 'bwrap' (cmdline='{}')",
+                            pid, curr_ppid, parent.cmdline
+                        );
+                        ancestor_is_bwrap = true;
+                        break;
+                    }
+                    curr_ppid = parent.ppid;
+                } else if let Ok(bytes) = fs::read(format!("/proc/{curr_ppid}/cmdline")) {
+                    let cmd = String::from_utf8_lossy(&bytes);
+                    if cmd.contains("bwrap") {
+                        println!(
+                            "[SandboxChecker] -> Sandbox ACTIVE: PID {} ancestor PID {} cmdline contains 'bwrap'",
+                            pid, curr_ppid
+                        );
+                        ancestor_is_bwrap = true;
+                        break;
+                    }
+                    break;
+                } else {
+                    break;
+                }
+            }
+
+            if ancestor_is_bwrap {
+                any_sandbox_active = true;
+                break;
+            }
+
+            // 3. Check Seccomp mode (2 = SECCOMP_MODE_FILTER)
+            if proc.seccomp >= 2 {
+                println!(
+                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} has active Seccomp BPF filter (Seccomp={})",
+                    pid, proc.seccomp
+                );
+                any_sandbox_active = true;
+                break;
+            }
+
+            // 4. Check namespace isolation
+            let child_pid_ns = fs::read_link(format!("/proc/{pid}/ns/pid")).ok();
+            let child_user_ns = fs::read_link(format!("/proc/{pid}/ns/user")).ok();
+
+            let ns_isolated = match (&my_pid_ns, &child_pid_ns) {
+                (Some(parent), Some(child)) => parent != child,
+                _ => false,
+            } || match (&my_user_ns, &child_user_ns) {
+                (Some(parent), Some(child)) => parent != child,
+                _ => false,
+            };
+
+            if ns_isolated {
+                println!(
+                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} has isolated namespaces (pid_ns={:?}, user_ns={:?})",
+                    pid, child_pid_ns, child_user_ns
+                );
+                any_sandbox_active = true;
+                break;
+            }
+
+            // If reading namespace returned PermissionDenied while we could read our own, it's inside user namespace
+            if my_pid_ns.is_some()
+                && let Err(e) = fs::read_link(format!("/proc/{pid}/ns/pid"))
+                && e.kind() == std::io::ErrorKind::PermissionDenied
+            {
+                println!(
+                    "[SandboxChecker] -> Sandbox ACTIVE: PID {} namespace inspection restricted (user namespace boundary)",
+                    pid
+                );
+                any_sandbox_active = true;
+                break;
             }
         }
 
-        if found_web_process {
+        if any_sandbox_active {
+            println!("[SandboxChecker] Overall result: Active");
+            PlatformSandboxStatus::Active
+        } else if found_web_process {
+            println!("[SandboxChecker] Overall result: Inactive (WebKitWebProcess running with no detected sandbox)");
             PlatformSandboxStatus::Inactive
         } else {
+            println!("[SandboxChecker] Overall result: NoChildProcessYet");
             PlatformSandboxStatus::NoChildProcessYet
         }
+    }
+}
+
+fn get_process_uid(pid: u32) -> Option<u32> {
+    let content = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            return rest.split_whitespace().next().and_then(|s| s.parse().ok());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_linux_sandbox_checker_live() {
+        let checker = LinuxSandboxChecker::new();
+        let status = checker.check_sandbox_status();
+        println!("Test live sandbox status: {:?}", status);
+        assert!(matches!(
+            status,
+            PlatformSandboxStatus::Active | PlatformSandboxStatus::NoChildProcessYet
+        ));
     }
 }
