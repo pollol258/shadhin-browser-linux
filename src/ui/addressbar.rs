@@ -1,6 +1,6 @@
 //! Pill-shaped address bar with security shield and action buttons
 //!
-//! Hosts the URL entry, real-time load progress bar, security status icon,
+//! Hosts the URL entry, security status icon,
 //! interactive bookmark star with folder popover, debounced autocomplete suggestions,
 //! keyboard navigation (Arrow keys, Alt+Enter, Escape), and paste sanitization.
 
@@ -25,7 +25,6 @@ pub struct SuggestionItem {
 pub struct AddressBar {
     container: gtk4::Box,
     entry: gtk4::Entry,
-    progress_bar: gtk4::ProgressBar,
     shield_icon: gtk4::Image,
     lock_btn: gtk4::Button,
     star_btn: gtk4::Button,
@@ -35,6 +34,7 @@ pub struct AddressBar {
     reload_icon: gtk4::Image,
     is_loading: Rc<RefCell<bool>>,
     on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
+    on_bookmark_changed: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     storage: RefCell<Option<StorageService>>,
     current_url: Rc<RefCell<String>>,
     current_title: Rc<RefCell<String>>,
@@ -44,7 +44,6 @@ pub struct AddressBar {
     selected_suggestion_idx: Rc<RefCell<Option<usize>>>,
     typed_text_backup: Rc<RefCell<String>>,
     autocomplete_debounce: Debounce,
-    progress_hide_debounce: Debounce,
     is_programmatic_change: Rc<RefCell<bool>>,
     was_focused_before_click: Rc<RefCell<bool>>,
 }
@@ -130,15 +129,7 @@ impl AddressBar {
 
         container.append(&pill_box);
 
-        // 2. Thin 2px progress bar underneath the pill
-        let progress_bar = gtk4::ProgressBar::builder()
-            .css_classes(["shadhin-progress-bar"])
-            .fraction(0.0)
-            .visible(false)
-            .build();
-        container.append(&progress_bar);
-
-        // 3. Autocomplete suggestions popover
+        // 2. Autocomplete suggestions popover
         let suggestions_popover = gtk4::Popover::builder()
             .has_arrow(false)
             .autohide(true)
@@ -159,10 +150,10 @@ impl AddressBar {
         suggestions_popover.set_child(Some(&suggestions_box));
 
         let on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>> = Rc::new(RefCell::new(None));
+        let on_bookmark_changed: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let current_url = Rc::new(RefCell::new(String::new()));
         let current_title = Rc::new(RefCell::new(String::new()));
         let autocomplete_debounce = Debounce::new();
-        let progress_hide_debounce = Debounce::new();
         let is_programmatic_change = Rc::new(RefCell::new(false));
         let was_focused_before_click = Rc::new(RefCell::new(false));
 
@@ -175,7 +166,6 @@ impl AddressBar {
         let addr = Self {
             container,
             entry,
-            progress_bar,
             shield_icon,
             lock_btn,
             star_btn,
@@ -185,6 +175,7 @@ impl AddressBar {
             reload_icon,
             is_loading,
             on_activate,
+            on_bookmark_changed,
             storage: RefCell::new(None),
             current_url,
             current_title,
@@ -194,7 +185,6 @@ impl AddressBar {
             selected_suggestion_idx,
             typed_text_backup,
             autocomplete_debounce,
-            progress_hide_debounce,
             is_programmatic_change,
             was_focused_before_click,
         };
@@ -274,24 +264,15 @@ impl AddressBar {
         self.entry.text().to_string()
     }
 
-    /// Sets the loading progress (0.0 to 1.0) with smooth hiding
-    pub fn set_progress(&self, fraction: f64) {
-        if fraction >= 1.0 {
-            self.progress_bar.set_fraction(1.0);
-            let pb = self.progress_bar.clone();
-            self.progress_hide_debounce
-                .debounce(Duration::from_millis(250), move || {
-                    pb.set_visible(false);
-                    pb.set_fraction(0.0);
-                });
-        } else if fraction <= 0.0 {
-            self.progress_hide_debounce.cancel();
-            self.progress_bar.set_visible(false);
-            self.progress_bar.set_fraction(0.0);
-        } else {
-            self.progress_hide_debounce.cancel();
-            self.progress_bar.set_visible(true);
-            self.progress_bar.set_fraction(fraction);
+    /// Connects a listener notified when a bookmark is added or removed
+    pub fn connect_bookmark_changed<F: Fn() + 'static>(&self, callback: F) {
+        *self.on_bookmark_changed.borrow_mut() = Some(Box::new(callback));
+    }
+
+    /// Emits the bookmark changed notification
+    pub fn emit_bookmark_changed(&self) {
+        if let Some(ref cb) = *self.on_bookmark_changed.borrow() {
+            cb();
         }
     }
 
@@ -705,14 +686,23 @@ impl AddressBar {
         let star_btn = self.star_btn.clone();
         let url_remove = url_cur.clone();
         let storage_ref = self.storage.borrow().clone();
+        let on_bm_remove = self.on_bookmark_changed.clone();
 
         remove_btn.connect_clicked(move |_| {
             let url = url_remove.borrow().clone();
+            let on_bm = on_bm_remove.clone();
             if let Some(ref st) = storage_ref {
-                st.dispatch(move |db| {
-                    let repo = BookmarkRepository::new(db.conn());
-                    let _ = repo.remove_bookmark_by_url(&url);
-                });
+                st.query_async(
+                    move |db| {
+                        let repo = BookmarkRepository::new(db.conn());
+                        let _ = repo.remove_bookmark_by_url(&url);
+                    },
+                    move |_| {
+                        if let Some(ref cb) = *on_bm.borrow() {
+                            cb();
+                        }
+                    },
+                );
             }
             star_icon.set_icon_name(Some("non-starred-symbolic"));
             star_btn.remove_css_class("active");
@@ -724,15 +714,24 @@ impl AddressBar {
         let star_btn_done = self.star_btn.clone();
         let url_save = url_cur;
         let storage_ref_done = self.storage.borrow().clone();
+        let on_bm_done = self.on_bookmark_changed.clone();
 
         done_btn.connect_clicked(move |_| {
             let url = url_save.borrow().clone();
             let name = name_entry.text().to_string();
+            let on_bm = on_bm_done.clone();
             if let Some(ref st) = storage_ref_done {
-                st.dispatch(move |db| {
-                    let repo = BookmarkRepository::new(db.conn());
-                    let _ = repo.add_bookmark(&name, &url, None, None, true);
-                });
+                st.query_async(
+                    move |db| {
+                        let repo = BookmarkRepository::new(db.conn());
+                        let _ = repo.add_bookmark(&name, &url, None, None, true);
+                    },
+                    move |_| {
+                        if let Some(ref cb) = *on_bm.borrow() {
+                            cb();
+                        }
+                    },
+                );
             }
             star_icon_done.set_icon_name(Some("starred-symbolic"));
             star_btn_done.add_css_class("active");

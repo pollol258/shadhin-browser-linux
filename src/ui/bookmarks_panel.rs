@@ -8,6 +8,7 @@ pub struct BookmarksPanel {
     container: gtk4::Box,
     storage: StorageService,
     on_open_url: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>, // (url, open_in_new_tab)
+    on_bookmark_changed: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     search_entry: gtk4::SearchEntry,
     tree_container: gtk4::Box,
 }
@@ -27,6 +28,7 @@ impl BookmarksPanel {
             .build();
 
         let on_open_url: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>> = Rc::new(RefCell::new(None));
+        let on_bookmark_changed: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
 
         // 1. Header with Title and Action Buttons
         let header = gtk4::Box::builder()
@@ -89,6 +91,7 @@ impl BookmarksPanel {
             container,
             storage,
             on_open_url,
+            on_bookmark_changed,
             search_entry,
             tree_container,
         };
@@ -107,6 +110,10 @@ impl BookmarksPanel {
         *self.on_open_url.borrow_mut() = Some(Box::new(callback));
     }
 
+    pub fn connect_bookmark_changed<F: Fn() + 'static>(&self, callback: F) {
+        *self.on_bookmark_changed.borrow_mut() = Some(Box::new(callback));
+    }
+
     pub fn refresh(&self, filter: &str) {
         // Clear previous tree
         while let Some(child) = self.tree_container.first_child() {
@@ -117,6 +124,7 @@ impl BookmarksPanel {
         let tree_box = self.tree_container.clone();
         let storage_clone = self.storage.clone();
         let on_open = self.on_open_url.clone();
+        let on_changed = self.on_bookmark_changed.clone();
 
         self.storage.query_async(
             move |db| {
@@ -158,7 +166,7 @@ impl BookmarksPanel {
                         .build();
 
                     for item in folder_items {
-                        let row = Self::create_bookmark_row(item, on_open.clone(), &storage_clone);
+                        let row = Self::create_bookmark_row(item, on_open.clone(), &storage_clone, on_changed.clone());
                         items_box.append(&row);
                     }
 
@@ -190,7 +198,7 @@ impl BookmarksPanel {
                     tree_box.append(&root_lbl);
 
                     for item in root_items {
-                        let row = Self::create_bookmark_row(item, on_open.clone(), &storage_clone);
+                        let row = Self::create_bookmark_row(item, on_open.clone(), &storage_clone, on_changed.clone());
                         tree_box.append(&row);
                     }
                 }
@@ -211,6 +219,7 @@ impl BookmarksPanel {
         item: &BookmarkItem,
         on_open: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
         storage: &StorageService,
+        on_changed: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     ) -> gtk4::Box {
         let row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -275,11 +284,20 @@ impl BookmarksPanel {
         let item_id = item.id;
         let storage_del = storage.clone();
         let row_ref = row.clone();
+        let on_bm_del = on_changed;
         del_btn.connect_clicked(move |_| {
-            storage_del.dispatch(move |db| {
-                let repo = BookmarkRepository::new(db.conn());
-                let _ = repo.remove_bookmark(item_id);
-            });
+            let on_bm = on_bm_del.clone();
+            storage_del.query_async(
+                move |db| {
+                    let repo = BookmarkRepository::new(db.conn());
+                    let _ = repo.remove_bookmark(item_id);
+                },
+                move |_| {
+                    if let Some(ref cb) = *on_bm.borrow() {
+                        cb();
+                    }
+                },
+            );
             row_ref.set_visible(false);
         });
         row.append(&del_btn);

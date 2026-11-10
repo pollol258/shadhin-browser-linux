@@ -558,7 +558,7 @@ impl DownloadsPanel {
         // Bottom: Progress Bar
         let progress_bar = gtk4::ProgressBar::builder()
             .hexpand(true)
-            .css_classes(["shadhin-progress-bar"])
+            .css_classes(["shadhin-progress"])
             .build();
         card.append(&progress_bar);
 

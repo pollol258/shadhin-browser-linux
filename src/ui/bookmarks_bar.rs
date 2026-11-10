@@ -24,7 +24,7 @@ impl BookmarksBar {
             .css_classes(["shadhin-bookmarks-bar"])
             .hexpand(true)
             .valign(gtk4::Align::Center)
-            .visible(true)
+            .visible(false)
             .build();
         container.set_size_request(-1, 32);
 
@@ -41,14 +41,6 @@ impl BookmarksBar {
             .visible(true)
             .build();
         container.append(&chips_box);
-
-        // Pre-populate with default empty label so bar is never zero-height or invisible before DB query returns
-        let empty_lbl = gtk4::Label::builder()
-            .label("No bookmarks yet (Ctrl+D to bookmark)")
-            .css_classes(["shadhin-bookmarks-bar-empty"])
-            .visible(true)
-            .build();
-        chips_box.append(&empty_lbl);
 
         let on_navigate: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
@@ -81,6 +73,7 @@ impl BookmarksBar {
     /// Refreshes bookmarks from SQLite database
     pub fn refresh(&self) {
         let chips = self.chips_box.clone();
+        let container = self.container.clone();
         let on_nav = self.on_navigate.clone();
 
         self.storage.query_async(
@@ -94,14 +87,11 @@ impl BookmarksBar {
                 }
 
                 if items.is_empty() {
-                    let empty_lbl = gtk4::Label::builder()
-                        .label("No bookmarks yet (Ctrl+D to bookmark)")
-                        .css_classes(["shadhin-bookmarks-bar-empty"])
-                        .visible(true)
-                        .build();
-                    chips.append(&empty_lbl);
+                    container.set_visible(false);
                     return;
                 }
+
+                container.set_visible(true);
 
                 for item in items.into_iter().take(12) {
                     let btn = gtk4::Button::builder()

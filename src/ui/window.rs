@@ -85,7 +85,6 @@ pub struct ShadhinWindow {
     tab_view: adw::TabView,
     tab_bar: adw::TabBar,
     tab_strip: Rc<ShadhinTabStrip>,
-    load_line: gtk4::ProgressBar,
     sandbox_banner: adw::Banner,
     find_bar: Rc<FindBar>,
     tab_manager: Rc<RefCell<TabManager>>,
@@ -121,7 +120,6 @@ pub struct NavigationContext {
     pub https_manager: Rc<RefCell<HttpsUpgradeManager>>,
     pub download_mgr: DownloadManager,
     pub persistence_allowed: bool,
-    pub load_line: gtk4::ProgressBar,
     pub sandbox_banner: adw::Banner,
     pub pending_bare_domain_fallbacks: Rc<RefCell<std::collections::HashMap<TabId, String>>>,
     pub fallback_bar: gtk4::Box,
@@ -257,15 +255,6 @@ impl ShadhinWindow {
         tab_bar_new_btn.set_size_request(28, 28);
         tab_bar.set_end_action_widget(Some(&tab_bar_new_btn));
 
-        // 2px load progress line directly under header
-        let load_line = gtk4::ProgressBar::builder()
-            .css_classes(["shadhin-load-line"])
-            .fraction(0.0)
-            .visible(false)
-            .hexpand(true)
-            .build();
-        load_line.set_size_request(-1, 2);
-
         // Real WebKit child process sandbox warning banner
         let sandbox_banner = adw::Banner::builder()
             .title("Sandbox is not active. Web content may be less isolated.")
@@ -352,6 +341,10 @@ impl ShadhinWindow {
             }
         });
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
+        let bb_changed = bookmarks_bar.clone();
+        toolbar.address_bar().connect_bookmark_changed(move || {
+            bb_changed.refresh();
+        });
         let current_workspace = Rc::new(RefCell::new("default".to_string()));
 
         // 5. Overlay Split View (Sidebar + Content)
@@ -400,10 +393,8 @@ impl ShadhinWindow {
         fallback_bar.append(&fallback_cancel_btn);
 
         root_box.append(toolbar.widget());
-        root_box.append(&load_line);
         root_box.append(&fallback_bar);
         root_box.append(&tab_bar);
-        bookmarks_bar.widget().set_visible(true);
         root_box.append(bookmarks_bar.widget());
         root_box.append(find_bar.widget());
 
@@ -558,7 +549,6 @@ impl ShadhinWindow {
             https_manager: https_manager.clone(),
             download_mgr: download_mgr.clone(),
             persistence_allowed,
-            load_line: load_line.clone(),
             sandbox_banner: sandbox_banner.clone(),
             pending_bare_domain_fallbacks,
             fallback_bar: fallback_bar.clone(),
@@ -640,7 +630,6 @@ impl ShadhinWindow {
             tab_view,
             tab_bar,
             tab_strip,
-            load_line,
             sandbox_banner,
             find_bar,
             tab_manager,
@@ -987,6 +976,10 @@ impl NavigationContext {
 
         // 6. Native Bookmarks, History, Downloads Panels
         let bookmarks_panel = BookmarksPanel::new(self.storage.clone());
+        let tb_bm = self.toolbar.clone();
+        bookmarks_panel.connect_bookmark_changed(move || {
+            tb_bm.address_bar().emit_bookmark_changed();
+        });
         stack.add_named(bookmarks_panel.widget(), Some("bookmarks"));
 
         let history_panel = HistoryPanel::new(self.storage.clone());
@@ -1313,8 +1306,6 @@ impl NavigationContext {
                 webkit6::LoadEvent::Started => {
                     tab.is_loading = true;
                     tb_lc.set_is_loading(true);
-                    nav_lc.load_line.set_fraction(0.05);
-                    nav_lc.load_line.set_visible(true);
                     if let Some(uri) = wv.uri() {
                         let uri_str = uri.as_str();
                         tab.url = uri_str.to_string();
@@ -1351,9 +1342,6 @@ impl NavigationContext {
                     tab.is_loading = false;
                     tab.progress = 0.0;
                     tb_lc.set_is_loading(false);
-                    tb_lc.address_bar().set_progress(0.0);
-                    nav_lc.load_line.set_visible(false);
-                    nav_lc.load_line.set_fraction(0.0);
 
                     // Real WebKit child process sandbox check
                     let sb_status = crate::browser::sandbox::check_webkit_child_sandbox();
@@ -1439,23 +1427,6 @@ impl NavigationContext {
         webview.connect_favicon_notify(move |wv| {
             tab_c_fav.borrow_mut().favicon = wv.favicon();
             nav_fav.sync_tabs();
-        });
-
-        // 4. connect_estimated_load_progress_notify
-        let tb_prog = self.toolbar.clone();
-        let tab_c_prog = tab_c.clone();
-        let ll_prog = self.load_line.clone();
-        webview.connect_estimated_load_progress_notify(move |wv| {
-            let progress = wv.estimated_load_progress();
-            tab_c_prog.borrow_mut().progress = progress;
-            tb_prog.address_bar().set_progress(progress);
-            if progress > 0.0 && progress < 1.0 {
-                ll_prog.set_fraction(progress);
-                ll_prog.set_visible(true);
-            } else {
-                ll_prog.set_visible(false);
-                ll_prog.set_fraction(0.0);
-            }
         });
 
         // 5. connect_decide_policy (HTTPS-Only Upgrade interceptor & Net Diagnostics)
@@ -1604,9 +1575,6 @@ impl NavigationContext {
             crate::utils::net_diagnostics::record_load_failed(failing_uri, load_event, error);
 
             tb_fail.set_is_loading(false);
-            tb_fail.address_bar().set_progress(0.0);
-            nav_fail.load_line.set_visible(false);
-            nav_fail.load_line.set_fraction(0.0);
 
             // Differentiate cancelled loads resulting from policy interventions (decision.ignore)
             // or Stop button clicks
@@ -2386,7 +2354,6 @@ impl NavigationContext {
                 self.toolbar.set_can_go_back(false);
                 self.toolbar.set_can_go_forward(false);
                 self.toolbar.set_is_loading(false);
-                self.toolbar.address_bar().set_progress(0.0);
             } else {
                 self.toolbar
                     .address_bar()
@@ -2411,7 +2378,6 @@ impl NavigationContext {
                 self.toolbar.set_can_go_back(active.can_go_back);
                 self.toolbar.set_can_go_forward(active.can_go_forward);
                 self.toolbar.set_is_loading(active.is_loading);
-                self.toolbar.address_bar().set_progress(active.progress);
                 if let Some(host) = extract_host_from_uri(&active.url) {
                     let shield_enabled = self.config.borrow().privacy.shield_enabled;
                     self.toolbar
@@ -2824,7 +2790,6 @@ impl ShadhinWindow {
         let items_r = items_nav.clone();
         let tv_r = tv_nav.clone();
         let tb_r = self.toolbar.clone();
-        let ll_r = self.load_line.clone();
         self.toolbar.connect_reload(move |is_loading| {
             if let Some(page) = tv_r.selected_page() {
                 let idx = tv_r.page_position(&page) as usize;
@@ -2835,8 +2800,6 @@ impl ShadhinWindow {
                     if is_loading {
                         wv.stop_loading();
                         tb_r.set_is_loading(false);
-                        ll_r.set_visible(false);
-                        ll_r.set_fraction(0.0);
                     } else {
                         wv.reload();
                     }
@@ -3761,11 +3724,6 @@ impl ShadhinWindow {
     /// Accessor to the top tab bar
     pub fn tab_bar(&self) -> &adw::TabBar {
         &self.tab_bar
-    }
-
-    /// Accessor to the load progress line
-    pub fn load_line(&self) -> &gtk4::ProgressBar {
-        &self.load_line
     }
 
     /// Accessor to the inline HTTP fallback bar

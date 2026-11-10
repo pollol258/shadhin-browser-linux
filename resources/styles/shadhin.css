@@ -196,28 +196,6 @@ button.swatch-orange { background-color: #e66100; }
   padding: 1px 4px;
 }
 
-/* --- 2px Load Line directly under header --- */
-.loadline,
-progressbar.shadhin-load-line,
-progressbar.shadhin-progress-bar,
-progressbar.shadhin-load-line trough,
-progressbar.shadhin-progress-bar trough {
-  min-height: 2px;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background-color: transparent;
-}
-
-progressbar.shadhin-load-line progress,
-progressbar.shadhin-progress-bar progress {
-  min-height: 2px;
-  background-color: @accent_bg;
-  border: none;
-  border-radius: 0;
-}
-
 /* --- Top Tab Strip (tabs 34px tall, radius 8px, min 120px, max 235px) --- */
 .top-tab-strip,
 tabbar.shadhin-top-tab-bar {
@@ -505,11 +483,5 @@ progressbar.shadhin-progress progress {
 
 .shadhin-bookmarks-bar-chip:hover {
   background-color: @hover_bg;
-}
-
-.shadhin-bookmarks-bar-empty {
-  color: @muted_text;
-  font-size: 12px;
-  font-style: italic;
 }
 
