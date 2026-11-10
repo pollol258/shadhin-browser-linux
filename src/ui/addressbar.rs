@@ -31,6 +31,9 @@ pub struct AddressBar {
     star_btn: gtk4::Button,
     star_icon: gtk4::Image,
     reader_btn: gtk4::Button,
+    reload_btn: gtk4::Button,
+    reload_icon: gtk4::Image,
+    is_loading: Rc<RefCell<bool>>,
     on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, bool)>>>>,
     storage: RefCell<Option<StorageService>>,
     current_url: Rc<RefCell<String>>,
@@ -67,7 +70,7 @@ impl AddressBar {
             .build();
 
         let shield_icon = gtk4::Image::from_icon_name("security-low-symbolic");
-        shield_icon.set_pixel_size(17);
+        shield_icon.set_pixel_size(16);
         let lock_btn = gtk4::Button::builder()
             .child(&shield_icon)
             .tooltip_text("Site information and privacy")
@@ -75,6 +78,7 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
+        lock_btn.set_size_request(30, 30);
         pill_box.append(&lock_btn);
 
         let entry = gtk4::Entry::builder()
@@ -84,11 +88,12 @@ impl AddressBar {
             .css_classes(["shadhin-address-entry"])
             .visible(true)
             .build();
+        EditableExt::set_alignment(&entry, 0.5);
         entry.update_property(&[gtk4::accessible::Property::Label("Address and search bar")]);
         pill_box.append(&entry);
 
         let star_icon = gtk4::Image::from_icon_name("non-starred-symbolic");
-        star_icon.set_pixel_size(17);
+        star_icon.set_pixel_size(16);
         let star_btn = gtk4::Button::builder()
             .child(&star_icon)
             .tooltip_text("Bookmark this page (Ctrl+D)")
@@ -96,10 +101,11 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
+        star_btn.set_size_request(30, 30);
         pill_box.append(&star_btn);
 
         let reader_icon = gtk4::Image::from_icon_name("view-reader-symbolic");
-        reader_icon.set_pixel_size(17);
+        reader_icon.set_pixel_size(16);
         let reader_btn = gtk4::Button::builder()
             .child(&reader_icon)
             .tooltip_text("Reader mode")
@@ -107,7 +113,20 @@ impl AddressBar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
+        reader_btn.set_size_request(30, 30);
         pill_box.append(&reader_btn);
+
+        let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
+        reload_icon.set_pixel_size(16);
+        let reload_btn = gtk4::Button::builder()
+            .child(&reload_icon)
+            .tooltip_text("Reload page (Ctrl+R)")
+            .css_classes(["iconbtn", "flat"])
+            .valign(gtk4::Align::Center)
+            .visible(true)
+            .build();
+        reload_btn.set_size_request(30, 30);
+        pill_box.append(&reload_btn);
 
         container.append(&pill_box);
 
@@ -151,6 +170,8 @@ impl AddressBar {
         let selected_suggestion_idx: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
         let typed_text_backup = Rc::new(RefCell::new(String::new()));
 
+        let is_loading = Rc::new(RefCell::new(false));
+
         let addr = Self {
             container,
             entry,
@@ -160,6 +181,9 @@ impl AddressBar {
             star_btn,
             star_icon,
             reader_btn,
+            reload_btn,
+            reload_icon,
+            is_loading,
             on_activate,
             storage: RefCell::new(None),
             current_url,
@@ -192,6 +216,9 @@ impl AddressBar {
         *self.is_programmatic_change.borrow_mut() = true;
         self.entry.set_text(text);
         *self.is_programmatic_change.borrow_mut() = false;
+        if !self.entry.has_focus() {
+            EditableExt::set_alignment(&self.entry, 0.5);
+        }
     }
 
     /// Checks if user is currently focused/typing in the address entry
@@ -210,6 +237,7 @@ impl AddressBar {
             *self.is_programmatic_change.borrow_mut() = true;
             self.entry.set_text(text);
             *self.is_programmatic_change.borrow_mut() = false;
+            EditableExt::set_alignment(&self.entry, 0.5);
         }
     }
 
@@ -320,6 +348,35 @@ impl AddressBar {
         &self.reader_btn
     }
 
+    /// Accessor to the reload button
+    pub fn reload_button(&self) -> &gtk4::Button {
+        &self.reload_btn
+    }
+
+    /// Toggles Reload / Stop appearance
+    pub fn set_is_loading(&self, loading: bool) {
+        *self.is_loading.borrow_mut() = loading;
+        if loading {
+            self.reload_icon
+                .set_icon_name(Some("process-stop-symbolic"));
+            self.reload_btn.set_tooltip_text(Some("Stop loading"));
+        } else {
+            self.reload_icon
+                .set_icon_name(Some("view-refresh-symbolic"));
+            self.reload_btn
+                .set_tooltip_text(Some("Reload page (Ctrl+R)"));
+        }
+    }
+
+    /// Connects the reload/stop button clicked signal
+    pub fn connect_reload<F: Fn(bool) + 'static>(&self, callback: F) {
+        let is_loading = self.is_loading.clone();
+        self.reload_btn.connect_clicked(move |_| {
+            let loading = *is_loading.borrow();
+            callback(loading);
+        });
+    }
+
     /// Closes the suggestions popover if open
     pub fn close_suggestions(&self) {
         self.suggestions_popover.popdown();
@@ -388,6 +445,12 @@ impl AddressBar {
                     } else {
                         tracing::warn!("AddressBar: on_activate callback is None!");
                     }
+                }
+                if !alt
+                    && let Some(root) = entry_k.root()
+                    && let Ok(win) = root.downcast::<gtk4::Window>()
+                {
+                    gtk4::prelude::RootExt::set_focus(&win, None::<&gtk4::Widget>);
                 }
                 return glib::Propagation::Stop;
             }
@@ -523,6 +586,11 @@ impl AddressBar {
                     tracing::warn!("AddressBar: activate signal received but on_activate callback is None!");
                 }
             }
+            if let Some(root) = entry.root()
+                && let Ok(win) = root.downcast::<gtk4::Window>()
+            {
+                gtk4::prelude::RootExt::set_focus(&win, None::<&gtk4::Widget>);
+            }
         });
 
         // 2. Click behavior: first click selects all, subsequent clicks place cursor
@@ -551,8 +619,10 @@ impl AddressBar {
         self.entry.connect_has_focus_notify(move |e| {
             if e.has_focus() {
                 *was_foc_notify.borrow_mut() = true;
+                EditableExt::set_alignment(e, 0.0);
             } else {
                 *was_foc_notify.borrow_mut() = false;
+                EditableExt::set_alignment(e, 0.5);
                 deb_f.cancel();
                 pop_f.popdown();
 
@@ -562,6 +632,7 @@ impl AddressBar {
                     *is_prog_f.borrow_mut() = true;
                     entry_f.set_text(&active_url);
                     *is_prog_f.borrow_mut() = false;
+                    EditableExt::set_alignment(&entry_f, 0.5);
                 }
             }
         });

@@ -18,8 +18,6 @@ pub struct ShadhinToolbar {
     center_clamp: adw::Clamp,
     back_btn: gtk4::Button,
     forward_btn: gtk4::Button,
-    reload_btn: gtk4::Button,
-    reload_icon: gtk4::Image,
     sidebar_toggle_btn: gtk4::Button,
     address_bar: Rc<AddressBar>,
     privacy_popover: Rc<PrivacyPopover>,
@@ -27,7 +25,6 @@ pub struct ShadhinToolbar {
     downloads_badge: gtk4::Label,
     downloads_popover: Rc<RefCell<Option<Rc<DownloadsPopover>>>>,
     menu_btn: gtk4::MenuButton,
-    is_loading: Rc<RefCell<bool>>,
 }
 
 impl ShadhinToolbar {
@@ -88,35 +85,12 @@ impl ShadhinToolbar {
 
         container.pack_start(&left_box);
 
-        // --- 2. Center: [reload/stop][address pill] wrapped in adw::Clamp ---
-        let reload_icon = gtk4::Image::from_icon_name("view-refresh-symbolic");
-        reload_icon.set_pixel_size(17);
-        let reload_btn = gtk4::Button::builder()
-            .child(&reload_icon)
-            .tooltip_text("Reload page (Ctrl+R)")
-            .css_classes(["iconbtn", "shadhin-nav-btn", "flat"])
-            .valign(gtk4::Align::Center)
-            .visible(true)
-            .build();
-        reload_btn.set_size_request(36, 36);
-
+        // --- 2. Center: [address pill with internal reload] wrapped in adw::Clamp ---
         let address_bar = Rc::new(AddressBar::new());
         let addr_widget = address_bar.widget();
         addr_widget.set_hexpand(true);
-        addr_widget.set_size_request(460, 39);
+        addr_widget.set_size_request(360, 38);
         addr_widget.set_visible(true);
-
-        let center_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(4)
-            .halign(gtk4::Align::Fill)
-            .valign(gtk4::Align::Center)
-            .hexpand(true)
-            .visible(true)
-            .css_classes(["address-group"])
-            .build();
-        center_box.append(&reload_btn);
-        center_box.append(addr_widget);
 
         let center_clamp = adw::Clamp::builder()
             .maximum_size(680)
@@ -125,7 +99,7 @@ impl ShadhinToolbar {
             .valign(gtk4::Align::Center)
             .visible(true)
             .build();
-        center_clamp.set_child(Some(&center_box));
+        center_clamp.set_child(Some(addr_widget));
 
         container.set_title_widget(Some(&center_clamp));
 
@@ -219,15 +193,11 @@ impl ShadhinToolbar {
             }
         });
 
-        let is_loading = Rc::new(RefCell::new(false));
-
         Self {
             container,
             center_clamp,
             back_btn,
             forward_btn,
-            reload_btn,
-            reload_icon,
             sidebar_toggle_btn,
             address_bar,
             privacy_popover,
@@ -235,7 +205,6 @@ impl ShadhinToolbar {
             downloads_badge,
             downloads_popover,
             menu_btn,
-            is_loading,
         }
     }
 
@@ -272,7 +241,7 @@ impl ShadhinToolbar {
         let effective_width = if window_width >= 360 { window_width } else { 1280 };
         let target = ((effective_width as f64 * 0.58).round() as i32).clamp(360, 680);
         self.center_clamp.set_maximum_size(target);
-        self.address_bar.widget().set_size_request(target.min(460), 39);
+        self.address_bar.widget().set_size_request(target.min(460), 38);
     }
 
     /// Closes all open popovers (main menu, downloads, privacy, address suggestions)
@@ -297,17 +266,7 @@ impl ShadhinToolbar {
 
     /// Toggles Reload / Stop appearance
     pub fn set_is_loading(&self, loading: bool) {
-        *self.is_loading.borrow_mut() = loading;
-        if loading {
-            self.reload_icon
-                .set_icon_name(Some("process-stop-symbolic"));
-            self.reload_btn.set_tooltip_text(Some("Stop loading"));
-        } else {
-            self.reload_icon
-                .set_icon_name(Some("view-refresh-symbolic"));
-            self.reload_btn
-                .set_tooltip_text(Some("Reload page (Ctrl+R)"));
-        }
+        self.address_bar.set_is_loading(loading);
     }
 
     /// Connects the back button clicked signal
@@ -322,11 +281,12 @@ impl ShadhinToolbar {
 
     /// Connects the reload/stop button clicked signal
     pub fn connect_reload<F: Fn(bool) + 'static>(&self, callback: F) {
-        let is_loading = self.is_loading.clone();
-        self.reload_btn.connect_clicked(move |_| {
-            let loading = *is_loading.borrow();
-            callback(loading);
-        });
+        self.address_bar.connect_reload(callback);
+    }
+
+    /// Accessor to the reload button
+    pub fn reload_button(&self) -> &gtk4::Button {
+        self.address_bar.reload_button()
     }
 
     /// Connects the sidebar toggle button clicked signal

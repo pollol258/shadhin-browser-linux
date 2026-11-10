@@ -60,33 +60,60 @@ entry:focus {
   padding: 0 14px;
 }
 
-/* --- Address Bar (39px pill, radius 999px) --- */
+/* --- Address Bar (Address Pill) --- */
 .address-pill {
-  min-height: 39px;
+  min-height: 38px;
   min-width: 320px;
   background-color: @view_bg;
   border: 1px solid @border_color;
   border-radius: 999px;
-  padding: 0 3px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  padding: 0 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
 .address-pill:focus-within {
-  outline: 2px solid @accent_bg;
+  border-color: @accent_bg;
+  box-shadow: 0 0 0 1px @accent_bg, 0 1px 3px rgba(0, 0, 0, 0.08);
+  outline: none;
 }
 
-.address-pill entry {
+.address-pill entry,
+.address-pill entry.shadhin-address-entry {
   background: transparent;
   border: none;
   box-shadow: none;
   color: @text_color;
-  padding: 0 7px;
-  min-height: 35px;
+  padding: 0 6px;
+  min-height: 32px;
 }
 
-.address-pill entry:focus {
+.address-pill entry:focus,
+.address-pill entry.shadhin-address-entry:focus {
   outline: none;
   box-shadow: none;
+}
+
+/* Compact circular icon buttons inside address pill (30x30px) */
+.address-pill button.iconbtn {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: @muted_text;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.address-pill button.iconbtn:hover {
+  background-color: @hover_bg;
+  color: @text_color;
+}
+
+.address-pill button.iconbtn.active {
+  color: @accent_bg;
+  background-color: @hover_bg;
 }
 
 /* --- Navigation & Icon Buttons (36x36px, radius 8px, 17px icon) --- */
@@ -172,7 +199,9 @@ button.swatch-orange { background-color: #e66100; }
 /* --- 2px Load Line directly under header --- */
 .loadline,
 progressbar.shadhin-load-line,
-progressbar.shadhin-load-line trough {
+progressbar.shadhin-progress-bar,
+progressbar.shadhin-load-line trough,
+progressbar.shadhin-progress-bar trough {
   min-height: 2px;
   padding: 0;
   margin: 0;
@@ -181,7 +210,8 @@ progressbar.shadhin-load-line trough {
   background-color: transparent;
 }
 
-progressbar.shadhin-load-line progress {
+progressbar.shadhin-load-line progress,
+progressbar.shadhin-progress-bar progress {
   min-height: 2px;
   background-color: @accent_bg;
   border: none;
