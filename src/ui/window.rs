@@ -352,16 +352,6 @@ impl ShadhinWindow {
             tb_resize.update_address_pill_width(w);
         });
 
-        let tb_blur = toolbar.clone();
-        let ts_blur = tab_strip.clone();
-        let sb_blur = sidebar.clone();
-        window.connect_is_active_notify(move |win| {
-            if !win.is_active() {
-                tb_blur.close_all_popovers();
-                ts_blur.close_popover();
-                sb_blur.close_popover();
-            }
-        });
         let bookmarks_bar = Rc::new(BookmarksBar::new(storage.clone()));
         let current_workspace = Rc::new(RefCell::new("default".to_string()));
 
@@ -3907,8 +3897,9 @@ impl ShadhinWindow {
             Some("Clear Browsing Data…"),
             Some("win.clear-browsing-data"),
         );
-        section_tools.append(Some("Preferences"), Some("win.settings"));
+        section_tools.append(Some("Settings"), Some("win.settings"));
         section_tools.append(Some("About Shadhin Browser"), Some("win.about"));
+        section_tools.append(Some("Quit"), Some("app.quit"));
         menu.append_section(None, &section_tools);
 
         menu

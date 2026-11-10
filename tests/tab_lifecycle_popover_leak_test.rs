@@ -30,8 +30,13 @@ fn test_tab_closure_and_popover_lifecycle() {
     }
     assert_eq!(window.tab_view().n_pages(), initial_count + 3);
 
-    // 2. Open toolbar popovers and verify close_all_popovers
+    // 2. Open toolbar popovers and verify menu button
+    let mb = window.toolbar().menu_button();
+    mb.popup();
+    while ctx.iteration(false) {}
+    assert!(mb.is_active());
     window.toolbar().close_all_popovers();
+    while ctx.iteration(false) {}
     assert!(!window.toolbar().menu_button().is_active());
 
     // 3. Close tabs one by one and pump the main loop

@@ -263,7 +263,6 @@ impl ShadhinToolbar {
             dl.popdown();
         }
         self.menu_btn.popdown();
-        self.menu_btn.set_active(false);
         self.address_bar.close_suggestions();
         self.address_bar.close_star_popover();
     }
